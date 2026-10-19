@@ -21,5 +21,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./config:/app/config
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     # On Linux VPS servers running production MTA, host networking can alternatively be used:
     # network_mode: host
