@@ -212,6 +212,9 @@ async function main() {
         console.log(`\n${colors.bold}📊 Outbound Queue:${colors.reset}`);
         console.log(`  • Pending      : ${colors.yellow}${d.queue.pending || 0}${colors.reset}`);
         console.log(`  • In Progress  : ${colors.cyan}${d.queue.processing || d.queue.delivering || 0}${colors.reset}`);
+        if (d.queue.retrying) {
+          console.log(`  • Retrying     : ${colors.yellow}${d.queue.retrying}${colors.reset}`);
+        }
         console.log(`  • Completed    : ${colors.green}${d.queue.completed || 0}${colors.reset}`);
         console.log(`  • Failed       : ${colors.red}${d.queue.failed || 0}${colors.reset}`);
       } else {
@@ -365,7 +368,14 @@ async function main() {
           let statusColor = colors.yellow;
           if (j.status === 'completed') statusColor = colors.green;
           if (j.status === 'failed') statusColor = colors.red;
+          if (j.status === 'retrying') statusColor = colors.yellow;
           console.log(`  [${statusColor}${j.status.toUpperCase()}${colors.reset}] ${j.to_email} (from: ${j.from_email}) - Attempts: ${j.attempts}`);
+          if (j.delivery_response) {
+            console.log(`     └─ Response: ${colors.green}${j.delivery_response}${colors.reset}`);
+          }
+          if (j.last_error) {
+            console.log(`     └─ Error: ${colors.red}${j.last_error}${colors.reset}`);
+          }
         }
       } else {
         console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);

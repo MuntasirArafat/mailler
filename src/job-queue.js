@@ -65,6 +65,9 @@ class JobQueue {
   start() {
     if (this.isRunning) return;
     this.isRunning = true;
+    try {
+      db.prepare("UPDATE outbound_jobs SET status = 'pending' WHERE status = 'processing'").run();
+    } catch (e) {}
     this.loop();
   }
 
