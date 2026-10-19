@@ -89,11 +89,16 @@ class InboundReceiver {
         }
       });
 
+      let isListening = false;
       this.server.on('error', err => {
         console.error('[InboundReceiver] Server error:', err.message);
+        if (!isListening) {
+          reject(err);
+        }
       });
 
       this.server.listen(this.port, this.host, () => {
+        isListening = true;
         console.log(`[InboundReceiver] Inbound SMTP Server listening on ${this.host}:${this.port}`);
         resolve(this.server);
       });
@@ -103,7 +108,11 @@ class InboundReceiver {
   stop() {
     return new Promise(resolve => {
       if (this.server) {
-        this.server.close(() => resolve());
+        try {
+          this.server.close(() => resolve());
+        } catch (e) {
+          resolve();
+        }
       } else {
         resolve();
       }

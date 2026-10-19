@@ -70,21 +70,36 @@ savedConfig = {
 };
 fs.writeFileSync(configFile, JSON.stringify(savedConfig, null, 2), 'utf8');
 
-// 4. Initialize Outbound Job Queue
-const jobQueue = new JobQueue({
-  concurrency: CONCURRENCY,
-  heloHost: HELO_HOST
-});
-jobQueue.start();
+async function start() {
+  // 4. Initialize Outbound Job Queue
+  const jobQueue = new JobQueue({
+    concurrency: CONCURRENCY,
+    heloHost: HELO_HOST
+  });
+  jobQueue.start();
 
-// 5. Initialize Inbound Receiver (Reading Mail)
-const inboundReceiver = new InboundReceiver({
-  port: INBOUND_PORT,
-  host: '0.0.0.0',
-  serverName: HELO_HOST
-});
+  // 5. Initialize Inbound Receiver (Reading Mail)
+  const inboundReceiver = new InboundReceiver({
+    port: INBOUND_PORT,
+    host: '0.0.0.0',
+    serverName: HELO_HOST
+  });
 
-inboundReceiver.start().then(() => {
+  let inboundRunning = false;
+  try {
+    await inboundReceiver.start();
+    inboundRunning = true;
+  } catch (err) {
+    console.error(`\n⚠️  [InboundReceiver Warning] Could not start inbound SMTP receiver on port ${INBOUND_PORT}: ${err.message}`);
+    if (err.code === 'EADDRINUSE') {
+      console.error(`👉 Port ${INBOUND_PORT} is already in use by another service (e.g. Postfix, Exim, or Sendmail).`);
+      console.error(`   To free port ${INBOUND_PORT}, run on your VPS:`);
+      console.error(`     systemctl stop postfix && systemctl disable postfix`);
+      console.error(`   Or check the listening process with: ss -tulpn | grep :${INBOUND_PORT}`);
+    }
+    console.error(`   Outbound mail engine and REST API service will still proceed.\n`);
+  }
+
   // 6. Initialize API with Authentication
   const app = createApiServer(jobQueue, inboundReceiver, { apiPassword: API_PASSWORD });
 
@@ -95,7 +110,7 @@ inboundReceiver.start().then(() => {
     console.log(`📡 REST API Endpoint     : http://localhost:${API_PORT}`);
     console.log(`🔒 API Authentication    : REQUIRED`);
     console.log(`🔑 Secret API Password   : ${API_PASSWORD}`);
-    console.log(`📥 Inbound Mail Receiver : smtp://0.0.0.0:${INBOUND_PORT}`);
+    console.log(`📥 Inbound Mail Receiver : ${inboundRunning ? `smtp://0.0.0.0:${INBOUND_PORT}` : `OFFLINE (Port ${INBOUND_PORT} occupied by another process)`}`);
     console.log(`⚡ Outbound Concurrency  : ${CONCURRENCY} active workers`);
     console.log(`💾 High-Volume Database  : SQLite WAL Engine (millions ready)`);
     console.log(`🛡️ Anti-Spam Shield      : DKIM + SPF Alignment + RFC 8058`);
@@ -109,7 +124,9 @@ inboundReceiver.start().then(() => {
   const shutdown = async () => {
     console.log('\nGracefully shutting down Mail Server...');
     jobQueue.stop();
-    await inboundReceiver.stop();
+    if (inboundRunning) {
+      await inboundReceiver.stop();
+    }
     server.close(() => {
       console.log('Server stopped cleanly.');
       process.exit(0);
@@ -118,7 +135,9 @@ inboundReceiver.start().then(() => {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
-}).catch(err => {
+}
+
+start().catch(err => {
   console.error('Fatal startup error:', err);
   process.exit(1);
 });

@@ -161,7 +161,17 @@ npm install --production
 echo -e "${GREEN}✔ Dependencies installed.${NC}"
 
 # 7. Configure Firewall (Open Port 25, API_PORT, 2525)
-echo -e "\n${CYAN}▶ Step 4/6: Configuring firewall rules...${NC}"
+echo -e "\n${CYAN}▶ Step 4/6: Configuring firewall rules & port availability...${NC}"
+
+# Stop conflicting default MTAs that occupy port 25 (e.g., Postfix, Sendmail, Exim)
+for conflict_svc in postfix sendmail exim exim4; do
+  if systemctl is-active --quiet "$conflict_svc" 2>/dev/null; then
+    echo -e "${YELLOW}Stopping conflicting service occupying port 25: ${conflict_svc}...${NC}"
+    systemctl stop "$conflict_svc" 2>/dev/null || true
+    systemctl disable "$conflict_svc" 2>/dev/null || true
+  fi
+done
+
 if command -v ufw &> /dev/null; then
   ufw allow 25/tcp comment "Inbound/Outbound SMTP" >/dev/null 2>&1 || true
   ufw allow 2525/tcp comment "Local Inbound SMTP Relay" >/dev/null 2>&1 || true
