@@ -1,0 +1,73 @@
+{
+  "uuid": "ca673aee-a9b5-40af-a8e3-a391773bff65",
+  "created_at": 1792427212915,
+  "attempts": 2,
+  "next_attempt": 1792427574441,
+  "mail_from": "sender@localmta.dev",
+  "rcpt_to": [
+    "user@example.com"
+  ],
+  "subject": "Haraka Test Message",
+  "headers": {
+    "from": "sender@localmta.dev",
+    "to": "user@example.com",
+    "subject": "Haraka Test Message"
+  },
+  "notes": {
+    "dkim_config": {
+      "domainName": "localmta.dev",
+      "keySelector": "default",
+      "privateKey": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDCYqW6Weh0jDeq\nF3B+lHv8BxvE3t0JmBaR6Firz8vZD1AZhQS8MYWQUlL2P8CcqhR1nHRaLDdnZbmq\nFeWBev5khxRIf8hwj1B1YI7fNJ1NyYP6tRFmun8UiNfrOiah/9Vbvyb/6Lxug/jG\nqsL3EUoSwEeH/YlSMiOAgkonJD8sYwFZ45hXgx07RqrTRJEmBF449cKK3vI7LKiQ\nXdafdIijj1degOMPyID2ED5ZSrtBuVsSSvaHNmtPzxKIgFGmbe4numx7SIN1JrfP\nWoEzUZJed5lBW4ZMFcCR5uUMiQcch30BvmHJccMwGECtoc0fT9llyJxLKs43XOI3\ns2EB9DgbAgMBAAECggEACyacijGhJ5ppkQzSK7i52g3QVn1QYb4DQXB6MbT0ZSm/\nNw+N43vVxR8r2itzEamiDdMhS5DwxrIrsemaplBXao3jKHuIFIjsHSeiWoSKp40x\nUH71lhaJtrRY6ooF8FIcO6yeAJ0pvg89BKyEDadEwAmesNrm9zugFL2kolUueI3F\nyAilRrtUZ9R2W7H0+IrxvGBqe+0saE98DljBO2mNwVaZ9GHDdVJ6s42JONznBP2k\nA/Ml0TDrBc6Sc0hTJcEDHb7mOC8EZE9jrW14eHWum1R1j4D8Db5UUkLdU//JCT4Z\nqoKdz7Z2DzDr6/v2wHo1g63svDf5E2YR7ZQ+prYguQKBgQDnj5JhBBCjADDPSKhh\njt3aUqZnefSzbPMPwDf+QERZ4VWx/D+46zXF3j3Mt3QirsJxZDwhmEPbvdWaYwIX\nKWUHkZv3Clv/um6WaSb+2NZ0W3kDeXIe+PnZ4aEvpVEPBy+JOLMDLdnwJM9e6oHJ\norX5KGt9A94gdwkrtLcTVSwCQwKBgQDW5qY+ntH4XUcTrKK+5QWbVhOCrG5tasfj\nhhu6VLdfSHuKjkvvM5eZE+ys6j94EP7yj17TAPFAoj4XOW0KGiazZWWEc0HMIA7q\n1Y8jBr+u+7zqbKmYcGW+rVTjNK9eqlMFjOXlV/21cmFsEV9+zyr8MzAVbdxWXHT9\nHXq9FHhxSQKBgQCks1O0OYXzyjDtXoqVSV626M5/DxljfXysmVW6O8/h9gpT3E0e\no/3NTTO7pkiuWormyBqU8o5hf3aspvtXqhO3/HNolS+2hs4doZEg9u4iOOWr+PeY\n3BIqTPeuwfETtVK0UWXSPwyiaCwvILFLz7WLEJrTgqq9gK0/LvyAfbYdrQKBgQDF\n/1CgVXgjmt2H1QFFXIFj81SaiwBbM4zjpoYZkUA6O/AHYr+3rhM46NChKFo953re\nRRYa1r1wzYrjnvdF3X5Wv09fT0oKJmdYGld88BTfxfTzEBbZ6oTzv4N8qugBEnDX\npk+SlRWefbog9YjEr19takQdGlFuCFWJeAXD+/5UcQKBgD5z1wzcoVDY0v3cQGfD\nTrMmU68xvX+x4tXEEhVVRDZpyfdMon6dHnIwz/Sk1NSMnqtApXLoaIEJeWJuCsWN\nR3KrxzC9hHgtdFLa34abGfzCLqK5sbTIowns+/TtNIvQQpDJoJ7A2IfIn4J75EZZ\n0efknpM630EUPTXWroF6cROM\n-----END PRIVATE KEY-----\n"
+    },
+    "dkim_signed": true
+  },
+  "raw_data": "From: sender@localmta.dev\r\nTo: user@example.com\r\nSubject: Haraka Test Message\r\n\r\nHello from pure Haraka-style MTA!",
+  "last_error": "Delivery rejected by MX",
+  "logs": [
+    {
+      "timestamp": "2026-10-19T16:27:54.374Z",
+      "level": "info",
+      "message": "Starting direct MTA delivery for sender <sender@localmta.dev> to 1 recipient(s)"
+    },
+    {
+      "timestamp": "2026-10-19T16:27:54.374Z",
+      "level": "info",
+      "message": "Compiling RFC 5322 MIME message (DKIM: Enabled)..."
+    },
+    {
+      "timestamp": "2026-10-19T16:27:54.384Z",
+      "level": "info",
+      "message": "[example.com] Looking up DNS MX records..."
+    },
+    {
+      "timestamp": "2026-10-19T16:27:54.439Z",
+      "level": "info",
+      "message": "[example.com] Found 1 MX host(s):  (p:0)"
+    },
+    {
+      "timestamp": "2026-10-19T16:27:54.439Z",
+      "level": "info",
+      "message": "[example.com] Connecting to MX: :25..."
+    },
+    {
+      "timestamp": "2026-10-19T16:27:54.439Z",
+      "level": "info",
+      "message": "[:25] Opening TCP connection to :25..."
+    },
+    {
+      "timestamp": "2026-10-19T16:27:54.441Z",
+      "level": "error",
+      "message": "[:25] Socket error: "
+    },
+    {
+      "timestamp": "2026-10-19T16:27:54.441Z",
+      "level": "warn",
+      "message": "[example.com] Delivery failed to :25 -> "
+    },
+    {
+      "timestamp": "2026-10-19T16:27:54.441Z",
+      "level": "error",
+      "message": "[example.com] Failed to deliver to any MX server. Last error: "
+    }
+  ]
+}

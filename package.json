@@ -1,0 +1,21 @@
+{
+  "name": "mailserver",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "cli": "node cli.js",
+    "test-port25": "node cli.js test-port25"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.3.0",
+    "mailparser": "^3.9.47",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.1.7",
+    "smtp-server": "^3.20.2"
+  }
+}

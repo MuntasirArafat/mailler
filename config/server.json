@@ -1,0 +1,29 @@
+{
+  "me": "mail.localmta.dev",
+  "inbound": {
+    "port": 2525,
+    "host": "0.0.0.0",
+    "timeout": 60000
+  },
+  "dashboard": {
+    "port": 3000,
+    "host": "0.0.0.0"
+  },
+  "outbound": {
+    "concurrency": 5,
+    "maxRetries": 5,
+    "retryIntervals": [
+      60,
+      300,
+      900,
+      1800,
+      3600
+    ]
+  },
+  "port": 8080,
+  "apiPassword": "mysecret123",
+  "inboundPort": 2525,
+  "concurrency": 20,
+  "heloHost": "mail.localmta.dev",
+  "updatedAt": "2026-10-19T17:09:20.312Z"
+}
