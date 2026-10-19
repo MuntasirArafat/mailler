@@ -3,23 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MailSources — Direct MTA Mail Server</title>
+  <title>MailSources</title>
   <link rel="icon" type="image/png" href="/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #ffffff;
-      --text-main: #09090b;
-      --text-muted: #71717a;
-      --text-subtle: #a1a1aa;
+      --text: #09090b;
+      --muted: #71717a;
+      --subtle: #a1a1aa;
       --border: #e4e4e7;
-      --border-subtle: #f4f4f5;
+      --pill-bg: #f4f4f5;
       --primary: #4f46e5;
       --primary-light: #eef2ff;
-      --code-bg: #18181b;
-      --code-text: #fafafa;
       --font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
       --font-mono: 'JetBrains Mono', monospace;
     }
@@ -32,7 +30,7 @@
 
     body {
       background-color: var(--bg);
-      color: var(--text-main);
+      color: var(--text);
       font-family: var(--font);
       min-height: 100vh;
       display: flex;
@@ -40,64 +38,33 @@
       align-items: center;
       justify-content: center;
       padding: 40px 20px;
-      line-height: 1.5;
-      position: relative;
-      overflow-x: hidden;
+      line-height: 1.6;
     }
 
-    /* Ambient background gradient highlights */
-    .bg-glow {
-      position: absolute;
-      top: 0;
-      left: 50%;
-      transform: translateX(-50%);
+    .wrapper {
       width: 100%;
-      max-width: 900px;
-      height: 480px;
-      background: radial-gradient(50% 60% at 50% 0%, rgba(99, 102, 241, 0.08) 0%, rgba(244, 244, 245, 0) 100%);
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    .main-wrap {
-      width: 100%;
-      max-width: 580px;
+      max-width: 520px;
       text-align: center;
-      position: relative;
-      z-index: 1;
-      animation: fadeIn 0.4s ease-out;
-    }
-
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
     }
 
     /* Kawaii Logo */
-    .logo-container {
+    .logo-box {
       margin: 0 auto 24px;
-      width: 110px;
-      height: 110px;
-      position: relative;
-      animation: gentleFloat 4s ease-in-out infinite;
+      width: 108px;
+      height: 108px;
     }
 
-    @keyframes gentleFloat {
-      0%, 100% { transform: translateY(0px); }
-      50% { transform: translateY(-5px); }
-    }
-
-    .brand-logo {
+    .logo-img {
       width: 100%;
       height: 100%;
       object-fit: cover;
       border-radius: 28px;
       border: 1px solid var(--border);
-      box-shadow: 0 10px 25px -4px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.03);
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
     }
 
     /* Badges */
-    .badge-row {
+    .badges {
       display: flex;
       align-items: center;
       justify-content: center;
@@ -105,7 +72,7 @@
       margin-bottom: 16px;
     }
 
-    .status-pill {
+    .badge-status {
       display: inline-flex;
       align-items: center;
       gap: 6px;
@@ -114,19 +81,18 @@
       background: #f0fdf4;
       border: 1px solid #bbf7d0;
       color: #15803d;
-      font-size: 0.76rem;
+      font-size: 0.75rem;
       font-weight: 600;
     }
 
-    .status-dot {
-      width: 7px;
-      height: 7px;
+    .dot {
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       background: #22c55e;
-      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
     }
 
-    .version-pill {
+    .badge-version {
       display: inline-flex;
       align-items: center;
       padding: 4px 10px;
@@ -136,92 +102,76 @@
       color: var(--primary);
       font-size: 0.74rem;
       font-family: var(--font-mono);
-      font-weight: 700;
-      letter-spacing: 0.2px;
+      font-weight: 600;
     }
 
-    /* Brand Title & Info */
-    h1.brand-name {
-      font-size: 2.35rem;
+    /* Brand & Info */
+    h1.brand-title {
+      font-size: 2.25rem;
       font-weight: 800;
-      color: var(--text-main);
-      letter-spacing: -0.9px;
-      line-height: 1.15;
-      margin-bottom: 10px;
+      color: var(--text);
+      letter-spacing: -0.8px;
+      margin-bottom: 8px;
+      line-height: 1.2;
     }
 
-    p.brand-info {
-      font-size: 1.02rem;
-      color: var(--text-muted);
-      max-width: 480px;
+    p.brand-subtitle {
+      font-size: 1rem;
+      color: var(--muted);
       margin: 0 auto 32px;
-      line-height: 1.55;
+      max-width: 440px;
       font-weight: 450;
     }
 
-    /* Command Area (Minimal, No card, No dots) */
-    .command-box {
-      background: var(--code-bg);
-      border: 1px solid #27272a;
-      border-radius: 14px;
-      padding: 14px 18px;
-      display: flex;
+    /* Clean Light Command Bar (No Terminal Aesthetic) */
+    .command-bar {
+      display: inline-flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      margin: 0 auto 28px;
-      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.12);
-      transition: border-color 0.2s ease;
+      gap: 14px;
+      background: #ffffff;
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      padding: 8px 10px 8px 18px;
+      max-width: 100%;
+      width: 100%;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
     }
 
-    .command-box:hover {
-      border-color: #3f3f46;
+    .command-bar:hover {
+      border-color: #cbd5e1;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
     }
 
     .command-code {
-      display: flex;
-      align-items: center;
-      gap: 10px;
       font-family: var(--font-mono);
       font-size: 0.95rem;
-      color: var(--code-text);
-      overflow-x: auto;
-      white-space: nowrap;
-    }
-
-    .command-prompt {
-      color: #38bdf8;
-      font-weight: 700;
-      user-select: none;
-    }
-
-    .command-text {
-      color: #f4f4f5;
-      font-weight: 500;
+      font-weight: 600;
+      color: var(--text);
       letter-spacing: -0.2px;
+      user-select: all;
     }
 
     .copy-btn {
-      background: #27272a;
-      border: 1px solid #3f3f46;
-      color: #d4d4d8;
+      background: var(--pill-bg);
+      border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 6px 14px;
-      font-size: 0.78rem;
-      font-weight: 600;
+      color: var(--text);
+      padding: 8px 14px;
       font-family: var(--font);
+      font-size: 0.8rem;
+      font-weight: 600;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      transition: all 0.2s ease;
+      transition: all 0.15s ease;
       flex-shrink: 0;
     }
 
     .copy-btn:hover {
-      background: #3f3f46;
-      color: #ffffff;
-      border-color: #52525b;
+      background: #e4e4e7;
     }
 
     .copy-btn:active {
@@ -229,145 +179,66 @@
     }
 
     .copy-btn.copied {
-      background: #065f46;
-      border-color: #059669;
-      color: #34d399;
+      background: #ecfdf5;
+      border-color: #a7f3d0;
+      color: #059669;
     }
 
-    /* Command Quick Options */
-    .command-options {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-bottom: 36px;
-    }
-
-    .cmd-option-btn {
-      background: transparent;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 5px 11px;
-      font-size: 0.78rem;
-      font-family: var(--font-mono);
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-
-    .cmd-option-btn:hover {
-      background: #f4f4f5;
-      color: var(--text-main);
-      border-color: #d4d4d8;
-    }
-
-    .cmd-option-btn.active {
-      background: var(--text-main);
-      color: #ffffff;
-      border-color: var(--text-main);
-    }
-
-    /* Minimal feature indicators */
-    .features-row {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 20px;
-      font-size: 0.82rem;
-      color: var(--text-muted);
-      flex-wrap: wrap;
-    }
-
-    .feature-item {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .feature-check {
-      color: #10b981;
-      font-weight: 800;
-      font-size: 0.85rem;
-    }
-
+    /* Footer */
     footer {
-      margin-top: 48px;
+      margin-top: 44px;
       font-size: 0.82rem;
-      color: var(--text-subtle);
+      color: var(--subtle);
     }
 
     footer a {
-      color: var(--text-muted);
+      color: var(--muted);
       text-decoration: none;
       font-weight: 500;
-      transition: color 0.15s ease;
     }
 
     footer a:hover {
-      color: var(--text-main);
+      color: var(--text);
     }
   </style>
 </head>
 <body>
-  <div class="bg-glow"></div>
-
-  <div class="main-wrap">
+  <div class="wrapper">
     <!-- Kawaii Logo -->
-    <div class="logo-container">
+    <div class="logo-box">
       <img 
         src="/logo.png" 
-        alt="MailSources Kawaii Logo" 
-        class="brand-logo" 
-        id="brand-logo"
+        alt="MailSources Logo" 
+        class="logo-img"
         onerror="this.onerror=null; this.src='https://api.iconify.design/twemoji:incoming-envelope.svg';"
       >
     </div>
 
     <!-- Status & Version -->
-    <div class="badge-row">
-      <div class="status-pill">
-        <span class="status-dot"></span>
+    <div class="badges">
+      <div class="badge-status">
+        <span class="dot"></span>
         <span id="status-label">Online</span>
       </div>
-      <div class="version-pill">v2.4.0</div>
+      <div class="badge-version">v2.4.0</div>
     </div>
 
     <!-- Brand Name & Description -->
-    <h1 class="brand-name">MailSources</h1>
-    <p class="brand-info">
-      Direct MTA mail engine with native DKIM signing, SPF alignment, and SQLite queue management.
+    <h1 class="brand-title">MailSources</h1>
+    <p class="brand-subtitle">
+      Direct MTA mail engine with native DKIM, SPF alignment, and SQLite queue management.
     </p>
 
-    <!-- Command Area (No card framing, No 3 dots) -->
-    <div class="command-box">
-      <div class="command-code">
-        <span class="command-prompt">$</span>
-        <span class="command-text" id="cmd-string">mailsource -h</span>
-      </div>
+    <!-- Clean Light Command Bar -->
+    <div class="command-bar">
+      <span class="command-code" id="cmd-text">mailsource -h</span>
       <button class="copy-btn" id="copy-btn" onclick="copyCommand()" aria-label="Copy command">
         <svg id="copy-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
         </svg>
-        <span id="copy-text">Copy</span>
+        <span id="btn-text">Copy</span>
       </button>
-    </div>
-
-    <!-- Quick Switcher for helpful commands -->
-    <div class="command-options">
-      <button class="cmd-option-btn active" onclick="setCommand('mailsource -h', this)">mailsource -h</button>
-      <button class="cmd-option-btn" onclick="setCommand('mailsource status', this)">mailsource status</button>
-      <button class="cmd-option-btn" onclick="setCommand('mailsource test-port25', this)">mailsource test-port25</button>
-      <button class="cmd-option-btn" onclick="setCommand('mailsource send --to user@example.com --subject &quot;Hi&quot;', this)">mailsource send ...</button>
-    </div>
-
-    <!-- Minimal feature indicators -->
-    <div class="features-row">
-      <span class="feature-item"><span class="feature-check">✓</span> RSA-2048 DKIM</span>
-      <span class="feature-item"><span class="feature-check">✓</span> SPF Alignment</span>
-      <span class="feature-item"><span class="feature-check">✓</span> Direct MX Delivery</span>
-      <span class="feature-item"><span class="feature-check">✓</span> One-Click List-Unsubscribe</span>
     </div>
 
     <footer>
@@ -376,37 +247,30 @@
   </div>
 
   <script>
-    function setCommand(cmd, btn) {
-      document.getElementById('cmd-string').textContent = cmd;
-      document.querySelectorAll('.cmd-option-btn').forEach(b => b.classList.remove('active'));
-      if (btn) btn.classList.add('active');
-    }
-
     function copyCommand() {
-      const cmd = document.getElementById('cmd-string').textContent;
-      navigator.clipboard.writeText(cmd).then(() => {
+      const text = document.getElementById('cmd-text').textContent;
+      navigator.clipboard.writeText(text).then(() => {
         const btn = document.getElementById('copy-btn');
-        const text = document.getElementById('copy-text');
+        const btnText = document.getElementById('btn-text');
         const icon = document.getElementById('copy-icon');
 
         btn.classList.add('copied');
-        text.textContent = 'Copied!';
+        btnText.textContent = 'Copied!';
         icon.innerHTML = '<polyline points="20 6 9 17 4 12"></polyline>';
 
         setTimeout(() => {
           btn.classList.remove('copied');
-          text.textContent = 'Copy';
+          btnText.textContent = 'Copy';
           icon.innerHTML = '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>';
         }, 2000);
       });
     }
 
-    // Health check ping
     fetch('/api/health')
       .then(r => r.json())
       .then(d => {
         if (d.status === 'healthy') {
-          document.getElementById('status-label').textContent = 'Online & Active';
+          document.getElementById('status-label').textContent = 'Online';
         }
       })
       .catch(() => {});
