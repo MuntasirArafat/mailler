@@ -113,11 +113,14 @@ if [ "$NODE_INSTALLED" = false ]; then
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs
   elif command -v dnf &> /dev/null; then
+    dnf module reset -y nodejs 2>/dev/null || true
+    dnf remove -y nodejs npm 2>/dev/null || true
     curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
-    dnf install -y nodejs
+    dnf install -y --allowerasing nodejs
   elif command -v yum &> /dev/null; then
+    yum remove -y nodejs npm 2>/dev/null || true
     curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
-    yum install -y nodejs
+    yum install -y --allowerasing nodejs
   fi
   echo -e "${GREEN}✔ Node.js $(node -v) installed successfully.${NC}"
 fi

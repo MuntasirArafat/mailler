@@ -1,0 +1,8 @@
+node_modules/
+.env
+data/*.db*
+!data/.gitkeep
+config/server.json
+queue/retry/*
+*.log
+.DS_Store

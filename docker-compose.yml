@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  mailserver:
+    build: .
+    image: mailsource:latest
+    container_name: mailsource-mta
+    restart: unless-stopped
+    ports:
+      - "25:25"       # Inbound SMTP
+      - "3000:3000"   # API & Web UI
+      - "2525:2525"   # Alternative SMTP port
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - INBOUND_PORT=25
+      - CONCURRENCY=25
+      - HELO_HOST=mail.yourdomain.com
+      # Set your secret API password below:
+      - API_PASSWORD=sec_change_this_to_a_secure_password
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    # On Linux VPS servers running production MTA, host networking can alternatively be used:
+    # network_mode: host
