@@ -11,7 +11,8 @@ class DirectMta {
     this.pool = new Map(); // host -> { socket, isTls, messagesSent, inUse, lastUsed }
 
     // Periodically prune idle pooled connections
-    setInterval(() => this.pruneIdleConnections(), 10000);
+    const timer = setInterval(() => this.pruneIdleConnections(), 10000);
+    if (timer && timer.unref) timer.unref();
   }
 
   pruneIdleConnections() {
