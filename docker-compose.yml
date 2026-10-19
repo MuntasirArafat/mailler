@@ -6,10 +6,7 @@ services:
     image: mailsource:latest
     container_name: mailsource-mta
     restart: unless-stopped
-    ports:
-      - "25:25"       # Inbound SMTP
-      - "3000:3000"   # API & Web UI
-      - "2525:2525"   # Alternative SMTP port
+    network_mode: host
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -21,8 +18,3 @@ services:
     volumes:
       - ./data:/app/data
       - ./config:/app/config
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
-    # On Linux VPS servers running production MTA, host networking can alternatively be used:
-    # network_mode: host
