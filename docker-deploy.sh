@@ -45,11 +45,13 @@ if ! command -v docker &> /dev/null; then
     apt-get install -y curl ca-certificates
     curl -fsSL https://get.docker.com | bash
   elif command -v dnf &> /dev/null; then
-    dnf install -y curl
-    curl -fsSL https://get.docker.com | bash
+    dnf install -y dnf-plugins-core curl
+    dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo 2>/dev/null || true
+    dnf install -y --allowerasing docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   elif command -v yum &> /dev/null; then
-    yum install -y curl
-    curl -fsSL https://get.docker.com | bash
+    yum install -y yum-utils curl
+    yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo 2>/dev/null || true
+    yum install -y --allowerasing docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   fi
   systemctl enable --now docker
   echo -e "${GREEN}✔ Docker installed and running.${NC}"
