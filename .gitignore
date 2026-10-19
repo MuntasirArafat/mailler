@@ -3,6 +3,7 @@ node_modules/
 data/*.db*
 !data/.gitkeep
 config/server.json
+config/dkim-keys.json
 queue/retry/*
 *.log
 .DS_Store

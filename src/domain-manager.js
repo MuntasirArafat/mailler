@@ -11,8 +11,19 @@ class DomainManager {
     if (!domain) throw new Error('Domain name is required');
     const cleanDomain = domain.toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
 
-    // 1. Generate or load DKIM key
-    const dkim = SpamShield.generateDkim(cleanDomain, selector);
+    // 1. Generate or load existing DKIM key (preserve existing key so DNS records stay valid across deploys)
+    const existingDkim = SpamShield.getDkim(cleanDomain);
+    let dkim;
+    if (existingDkim && existingDkim.selector === selector) {
+      dkim = {
+        domain: cleanDomain,
+        selector,
+        recordName: existingDkim.txt_record_name,
+        txtValue: existingDkim.txt_record_value
+      };
+    } else {
+      dkim = SpamShield.generateDkim(cleanDomain, selector);
+    }
 
     // 2. Insert or update hosted domain
     const stmt = db.prepare(`
@@ -105,7 +116,12 @@ class DomainManager {
       domain: cleanDomain,
       verified: isVerified,
       deliverabilityScore: audit.deliverabilityScore,
+      score: audit.deliverabilityScore,
       checks: audit.checks,
+      spf: { verified: audit.checks.spf.passed, valid: audit.checks.spf.passed, record: audit.checks.spf.record, advice: audit.checks.spf.advice },
+      dkim: { verified: audit.checks.dkim.passed, valid: audit.checks.dkim.passed, record: audit.checks.dkim.record, advice: audit.checks.dkim.advice },
+      dmarc: { verified: audit.checks.dmarc.passed, valid: audit.checks.dmarc.passed, record: audit.checks.dmarc.record, advice: audit.checks.dmarc.advice },
+      mx: { verified: audit.checks.mx.passed, valid: audit.checks.mx.passed, records: audit.checks.mx.records, advice: audit.checks.mx.advice },
       recommendations: audit.recommendations
     };
   }

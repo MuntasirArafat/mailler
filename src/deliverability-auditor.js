@@ -147,6 +147,13 @@ class DeliverabilityAuditor {
     }
 
     report.deliverabilityScore = score;
+    report.score = score;
+    report.spf = { valid: report.checks.spf.passed, verified: report.checks.spf.passed, record: report.checks.spf.record, advice: report.checks.spf.advice };
+    report.dkim = { valid: report.checks.dkim.passed, verified: report.checks.dkim.passed, record: report.checks.dkim.record, advice: report.checks.dkim.advice };
+    report.dmarc = { valid: report.checks.dmarc.passed, verified: report.checks.dmarc.passed, record: report.checks.dmarc.record, advice: report.checks.dmarc.advice };
+    report.mx = { valid: report.checks.mx.passed, verified: report.checks.mx.passed, records: report.checks.mx.records, advice: report.checks.mx.advice };
+    report.ptr = { valid: report.checks.ptr.passed, verified: report.checks.ptr.passed, ptrHost: report.checks.ptr.ptrHost, advice: report.checks.ptr.advice };
+    report.port25Outbound = { open: report.checks.port25.passed, latencyMs: report.checks.port25.latencyMs, advice: report.checks.port25.advice };
     return report;
   }
 

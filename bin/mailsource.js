@@ -318,12 +318,34 @@ async function main() {
         const res = await apiRequest('POST', `/domains/${dom}/verify`);
         if (res.status === 200) {
           const v = res.data;
+          const spfPassed = v.checks?.spf?.passed ?? v.spf?.verified ?? v.spf?.valid ?? false;
+          const dkimPassed = v.checks?.dkim?.passed ?? v.dkim?.verified ?? v.dkim?.valid ?? false;
+          const dmarcPassed = v.checks?.dmarc?.passed ?? v.dmarc?.verified ?? v.dmarc?.valid ?? false;
+          const mxPassed = v.checks?.mx?.passed ?? v.mx?.verified ?? v.mx?.valid ?? false;
+
           console.log(`\n${colors.bold}DNS Verification Results for ${dom}:${colors.reset}`);
-          console.log(`  • SPF Record   : ${v.spf.verified ? colors.green + '✔ PASS' : colors.red + '✖ MISSING'} ${colors.reset}`);
-          console.log(`  • DKIM Record  : ${v.dkim.verified ? colors.green + '✔ PASS' : colors.red + '✖ MISSING'} ${colors.reset}`);
-          console.log(`  • DMARC Record : ${v.dmarc.verified ? colors.green + '✔ PASS' : colors.red + '✖ MISSING'} ${colors.reset}`);
-          console.log(`  • MX Record    : ${v.mx.verified ? colors.green + '✔ PASS' : colors.red + '✖ MISSING'} ${colors.reset}`);
+          console.log(`  • SPF Record   : ${spfPassed ? colors.green + '✔ PASS' : colors.red + '✖ MISSING'} ${colors.reset}`);
+          if (v.checks?.spf?.record) console.log(`    ${colors.dim}${v.checks.spf.record}${colors.reset}`);
+          else if (v.checks?.spf?.advice) console.log(`    ${colors.yellow}👉 ${v.checks.spf.advice}${colors.reset}`);
+
+          console.log(`  • DKIM Record  : ${dkimPassed ? colors.green + '✔ PASS' : colors.red + '✖ MISSING'} ${colors.reset}`);
+          if (v.checks?.dkim?.record) console.log(`    ${colors.dim}${v.checks.dkim.record}${colors.reset}`);
+          else if (v.checks?.dkim?.advice) console.log(`    ${colors.yellow}👉 ${v.checks.dkim.advice}${colors.reset}`);
+
+          console.log(`  • DMARC Record : ${dmarcPassed ? colors.green + '✔ PASS' : colors.red + '✖ MISSING'} ${colors.reset}`);
+          if (v.checks?.dmarc?.record) console.log(`    ${colors.dim}${v.checks.dmarc.record}${colors.reset}`);
+          else if (v.checks?.dmarc?.advice) console.log(`    ${colors.yellow}👉 ${v.checks.dmarc.advice}${colors.reset}`);
+
+          console.log(`  • MX Record    : ${mxPassed ? colors.green + '✔ PASS' : colors.red + '✖ MISSING'} ${colors.reset}`);
+          if (v.checks?.mx?.records?.length) console.log(`    ${colors.dim}${v.checks.mx.records.join(', ')}${colors.reset}`);
+          else if (v.checks?.mx?.advice) console.log(`    ${colors.yellow}👉 ${v.checks.mx.advice}${colors.reset}`);
+
+          if (v.deliverabilityScore !== undefined || v.score !== undefined) {
+            console.log(`  • Deliverability Score: ${colors.bold}${v.deliverabilityScore ?? v.score}/100${colors.reset}`);
+          }
           console.log(`\nOverall Verified: ${v.verified ? colors.green + colors.bold + 'YES (Ready to send)' : colors.yellow + 'NO (Records still propagating)'}${colors.reset}`);
+        } else {
+          console.error(`${colors.red}✖ Error: ${res.data?.error || JSON.stringify(res.data)}${colors.reset}`);
         }
         return;
       }
@@ -411,14 +433,21 @@ async function main() {
       const res = await apiRequest('GET', `/deliverability/audit/${dom}`);
       if (res.status === 200) {
         const a = res.data;
-        console.log(`\n${colors.bold}Deliverability Score: ${colors.cyan}${a.score}/100${colors.reset}`);
-        console.log(`  • SPF  : ${a.spf.valid ? colors.green + '✔ VALID' : colors.red + '✖ INVALID'}${colors.reset}`);
-        console.log(`  • DKIM : ${a.dkim.valid ? colors.green + '✔ VALID' : colors.red + '✖ INVALID'}${colors.reset}`);
-        console.log(`  • DMARC: ${a.dmarc.valid ? colors.green + '✔ VALID' : colors.red + '✖ INVALID'}${colors.reset}`);
-        console.log(`  • PTR  : ${a.ptr.valid ? colors.green + '✔ VALID' : colors.yellow + '▲ NO PTR / NOT MATCHED'}${colors.reset}`);
-        console.log(`  • Port 25 Outbound : ${a.port25Outbound.open ? colors.green + '✔ OPEN' : colors.red + '✖ BLOCKED'}${colors.reset}`);
+        const score = a.deliverabilityScore ?? a.score ?? 0;
+        const spfValid = a.checks?.spf?.passed ?? a.spf?.valid ?? a.spf?.verified ?? false;
+        const dkimValid = a.checks?.dkim?.passed ?? a.dkim?.valid ?? a.dkim?.verified ?? false;
+        const dmarcValid = a.checks?.dmarc?.passed ?? a.dmarc?.valid ?? a.dmarc?.verified ?? false;
+        const ptrValid = a.checks?.ptr?.passed ?? a.ptr?.valid ?? a.ptr?.verified ?? false;
+        const port25Open = a.checks?.port25?.passed ?? a.port25Outbound?.open ?? false;
+
+        console.log(`\n${colors.bold}Deliverability Score: ${colors.cyan}${score}/100${colors.reset}`);
+        console.log(`  • SPF  : ${spfValid ? colors.green + '✔ VALID' : colors.red + '✖ INVALID'}${colors.reset}`);
+        console.log(`  • DKIM : ${dkimValid ? colors.green + '✔ VALID' : colors.red + '✖ INVALID'}${colors.reset}`);
+        console.log(`  • DMARC: ${dmarcValid ? colors.green + '✔ VALID' : colors.red + '✖ INVALID'}${colors.reset}`);
+        console.log(`  • PTR  : ${ptrValid ? colors.green + '✔ VALID' : colors.yellow + '▲ NO PTR / NOT MATCHED'}${colors.reset}`);
+        console.log(`  • Port 25 Outbound : ${port25Open ? colors.green + '✔ OPEN' : colors.red + '✖ BLOCKED'}${colors.reset}`);
       } else {
-        console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);
+        console.error(`${colors.red}✖ Error: ${res.data?.error || JSON.stringify(res.data)}${colors.reset}`);
       }
       return;
     }
