@@ -59,6 +59,13 @@ else
   echo -e "${GREEN}✔ Found Docker $(docker --version)${NC}"
 fi
 
+# Configure reliable DNS for Docker engine if not present
+if [ ! -f /etc/docker/daemon.json ]; then
+  mkdir -p /etc/docker
+  echo '{"dns": ["8.8.8.8", "1.1.1.1"]}' > /etc/docker/daemon.json
+  systemctl restart docker 2>/dev/null || true
+fi
+
 # 3. Create persistent directories
 mkdir -p data config
 

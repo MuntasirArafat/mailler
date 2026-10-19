@@ -1,12 +1,4 @@
-FROM node:22-bookworm-slim
-
-# Install system dependencies (openssl, dns utilities, curl)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssl \
-    ca-certificates \
-    dnsutils \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+FROM node:22-alpine
 
 WORKDIR /app
 
