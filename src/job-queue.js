@@ -66,7 +66,7 @@ class JobQueue {
     if (this.isRunning) return;
     this.isRunning = true;
     try {
-      db.prepare("UPDATE outbound_jobs SET status = 'pending' WHERE status = 'processing'").run();
+      db.prepare("UPDATE outbound_jobs SET status = 'pending', next_attempt_at = ? WHERE status = 'processing'").run(Date.now());
     } catch (e) {}
     this.loop();
   }
@@ -282,7 +282,7 @@ class JobQueue {
   }
 
   retryFailed() {
-    const res = db.prepare("UPDATE outbound_jobs SET status = 'pending', next_attempt_at = ? WHERE status = 'failed'").run(Date.now());
+    const res = db.prepare("UPDATE outbound_jobs SET status = 'pending', next_attempt_at = ? WHERE status IN ('failed', 'retrying', 'processing')").run(Date.now());
     return res.changes;
   }
 }
