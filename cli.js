@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 
-const DirectMtaSender = require('./src/direct-sender');
-const dkimManager = require('./src/dkim-manager');
 const DnsChecker = require('./src/dns-checker');
 
 function parseArgs(args) {
@@ -85,6 +83,7 @@ Options for 'send':
   }
 
   if (cmd === 'generate-dkim') {
+    const dkimManager = require('./src/dkim-manager');
     const domain = args._target || args.domain;
     const selector = args.selector || 'default';
     if (!domain) {
@@ -107,6 +106,8 @@ Options for 'send':
   }
 
   if (cmd === 'send') {
+    const DirectMtaSender = require('./src/direct-sender');
+    const dkimManager = require('./src/dkim-manager');
     const to = args.to;
     const from = args.from;
     const subject = args.subject || 'Direct MTA Test Email';
