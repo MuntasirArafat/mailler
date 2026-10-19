@@ -64,17 +64,34 @@ class SpamShield {
    * - Valid RFC 2822 Date
    */
   static prepareAntiSpamMessage(mailOptions) {
-    const fromAddr = mailOptions.from.trim();
-    const domainMatch = fromAddr.match(/@([^<>\s]+)/);
-    const domain = domainMatch ? domainMatch[1].toLowerCase().replace(/[>]/g, '') : 'localhost';
+    let fromEmail = mailOptions.from ? mailOptions.from.trim() : '';
+    let fromName = mailOptions.fromName || mailOptions.name || '';
+
+    // Extract display name and clean email if passed as "Name <email@domain.com>" or Name <email@domain.com>
+    const nameEmailMatch = fromEmail.match(/^(?:["']?([^"']+)["']?\s*)?<([^>]+)>$/);
+    if (nameEmailMatch) {
+      if (!fromName && nameEmailMatch[1]) {
+        fromName = nameEmailMatch[1].trim();
+      }
+      fromEmail = nameEmailMatch[2].trim();
+    } else {
+      fromEmail = fromEmail.replace(/[<>]/g, '').trim();
+    }
+
+    const domainMatch = fromEmail.match(/@([^<>\s]+)/);
+    const domain = domainMatch ? domainMatch[1].toLowerCase() : 'localhost';
 
     const msgUuid = crypto.randomUUID();
     const messageId = `<${msgUuid}@${domain}>`;
+
+    const formattedFrom = fromName ? `"${fromName}" <${fromEmail}>` : `<${fromEmail}>`;
 
     const headers = {
       'Message-ID': messageId,
       'Date': new Date().toUTCString(),
       'X-Mailer': 'DirectMTA-HighThroughput/2.0',
+      'Sender': `<${fromEmail}>`,
+      'Reply-To': formattedFrom,
       'Return-Path': `<bounce+${msgUuid}@${domain}>`,
       ...(mailOptions.headers || {})
     };
@@ -109,7 +126,7 @@ class SpamShield {
     const mailer = nodemailer.createTransport(transportConfig);
 
     return mailer.sendMail({
-      from: mailOptions.from,
+      from: formattedFrom,
       to: mailOptions.to,
       subject: mailOptions.subject,
       text: mailOptions.text || '',

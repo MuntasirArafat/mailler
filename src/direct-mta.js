@@ -46,14 +46,16 @@ class DirectMta {
   }
 
   async deliver(from, to, mimeBuffer) {
-    const domain = to.split('@')[1].toLowerCase().trim();
+    const cleanFrom = from.replace(/.*<([^>]+)>.*/, '$1').trim();
+    const cleanTo = to.replace(/.*<([^>]+)>.*/, '$1').trim();
+    const domain = cleanTo.split('@')[1].toLowerCase().trim();
     const mxHosts = await this.resolveMx(domain);
 
     let lastError = null;
 
     for (const host of mxHosts) {
       try {
-        return await this.deliverToHost(host, from, to, mimeBuffer);
+        return await this.deliverToHost(host, cleanFrom, cleanTo, mimeBuffer);
       } catch (err) {
         lastError = err;
         // Try next MX host in priority list

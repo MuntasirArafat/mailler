@@ -47,6 +47,7 @@ Commands:
 Options for 'send':
   --to             Recipient email address (e.g. user@gmail.com)
   --from           Sender email address (e.g. admin@yourdomain.com)
+  --name           Sender display name (e.g. "Exauraa Support")
   --subject        Email subject
   --body           Email plain text content
   --html           Optional HTML content
@@ -110,6 +111,7 @@ Options for 'send':
     const dkimManager = require('./src/dkim-manager');
     const to = args.to;
     const from = args.from;
+    const name = args.name || args.n || args['from-name'];
     const subject = args.subject || 'Direct MTA Test Email';
     const text = args.body || args.text || 'This email was delivered directly via Node.js MTA on port 25 without any SMTP relay.';
     const html = args.html;
@@ -117,13 +119,18 @@ Options for 'send':
 
     if (!to || !from) {
       console.error('Error: Both --to and --from are required.');
-      console.error('Example: node cli.js send --to recipient@example.com --from me@mydomain.com');
+      console.error('Example: node cli.js send --to recipient@example.com --from me@mydomain.com [--name "My Name"]');
       process.exit(1);
+    }
+
+    let formattedFrom = from.trim();
+    if (name && !formattedFrom.includes('<')) {
+      formattedFrom = `"${name}" <${formattedFrom}>`;
     }
 
     console.log(`\n======================================================`);
     console.log(`DIRECT MTA EMAIL TRANSMISSION`);
-    console.log(`From   : ${from}`);
+    console.log(`From   : ${formattedFrom}`);
     console.log(`To     : ${to}`);
     console.log(`Subject: ${subject}`);
     console.log(`======================================================\n`);
@@ -131,7 +138,7 @@ Options for 'send':
     const sender = new DirectMtaSender({ heloHost });
 
     // Check DKIM
-    const parsed = DirectMtaSender.parseEmail(from);
+    const parsed = DirectMtaSender.parseEmail(formattedFrom);
     let dkim = null;
     if (parsed.domain) {
       const stored = dkimManager.getKey(parsed.domain);

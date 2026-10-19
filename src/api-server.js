@@ -55,17 +55,31 @@ function createApiServer(jobQueue, inboundReceiver, options = {}) {
   // 1. OUTBOUND: SINGLE SEND
   app.post('/api/send', async (req, res) => {
     try {
-      const { from, to, subject, text, html, unsubscribeUrl, unsubscribeEmail, sync, headers } = req.body;
+      const { from, to, name, fromName, subject, text, html, unsubscribeUrl, unsubscribeEmail, sync, headers } = req.body;
       if (!from || !to) {
         return res.status(400).json({ error: 'Both "from" and "to" email addresses are required.' });
+      }
+
+      const senderName = fromName || name || null;
+      let formattedFrom = from.trim();
+      if (senderName && !formattedFrom.includes('<')) {
+        formattedFrom = `"${senderName}" <${formattedFrom}>`;
       }
 
       if (sync) {
         // Direct synchronous delivery without queueing
         const prepared = await SpamShield.prepareAntiSpamMessage({
-          from, to, subject, text, html, unsubscribeUrl, unsubscribeEmail, headers
+          from: formattedFrom,
+          fromName: senderName,
+          to,
+          subject,
+          text,
+          html,
+          unsubscribeUrl,
+          unsubscribeEmail,
+          headers
         });
-        const delivery = await jobQueue.mta.deliver(from, to, prepared.buffer);
+        const delivery = await jobQueue.mta.deliver(formattedFrom, to, prepared.buffer);
         return res.json({
           success: true,
           sync: true,
@@ -77,7 +91,15 @@ function createApiServer(jobQueue, inboundReceiver, options = {}) {
 
       // Enqueue into high-capacity job queue
       const job = jobQueue.enqueue({
-        from, to, subject, text, html, unsubscribeUrl, unsubscribeEmail, headers
+        from: formattedFrom,
+        fromName: senderName,
+        to,
+        subject,
+        text,
+        html,
+        unsubscribeUrl,
+        unsubscribeEmail,
+        headers
       });
 
       res.status(202).json({

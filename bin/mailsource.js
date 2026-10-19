@@ -38,8 +38,8 @@ ${colors.bold}USAGE:${colors.reset}
   mailsource <command> [options]
 
 ${colors.bold}SEND COMMANDS:${colors.reset}
-  mailsource send --to <email> --from <email> --subject "<subj>" --body "<text>"
-                  [--html "<html>"] [--sync]
+  mailsource send --to <email> --from <email> [--name "<name>"]
+                  --subject "<subj>" --body "<text>" [--html "<html>"] [--sync]
 
 ${colors.bold}INBOX & READING COMMANDS:${colors.reset}
   mailsource inbox                 List received inbound emails
@@ -169,6 +169,7 @@ async function main() {
       const flags = parseFlags(args.slice(1));
       const to = flags.to || flags.t;
       const from = flags.from || flags.f;
+      const name = flags.name || flags.n || flags['from-name'] || flags.sender || null;
       const subject = flags.subject || flags.s;
       const body = flags.body || flags.text || flags.b || '';
       const html = flags.html || flags.h || null;
@@ -176,13 +177,18 @@ async function main() {
 
       if (!to || !from || !subject) {
         console.error(`${colors.red}✖ Error: Missing required arguments.${colors.reset}`);
-        console.log(`Usage: mailsource send --to <email> --from <email> --subject "<subj>" --body "<text>"`);
+        console.log(`Usage: mailsource send --to <email> --from <email> [--name "<name>"] --subject "<subj>" --body "<text>"`);
         process.exit(1);
       }
 
-      console.log(`${colors.cyan}▶ Sending email from ${colors.bold}${from}${colors.reset} to ${colors.bold}${to}${colors.reset}...`);
+      let formattedFrom = from.trim();
+      if (name && !formattedFrom.includes('<')) {
+        formattedFrom = `"${name}" <${formattedFrom}>`;
+      }
+
+      console.log(`${colors.cyan}▶ Sending email from ${colors.bold}${formattedFrom}${colors.reset} to ${colors.bold}${to}${colors.reset}...`);
       
-      const payload = { from, to, subject, text: body, html: html || `<p>${body}</p>`, sync: !!sync };
+      const payload = { from: formattedFrom, name, to, subject, text: body, html: html || `<p>${body}</p>`, sync: !!sync };
       const res = await apiRequest('POST', '/send', payload);
 
       if (res.status === 200 || res.status === 202) {
