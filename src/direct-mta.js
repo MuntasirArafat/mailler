@@ -209,6 +209,7 @@ class DirectMta {
         if (rawStr.startsWith('.')) rawStr = '.' + rawStr;
         if (!rawStr.endsWith('\r\n')) rawStr += '\r\n';
         rawStr += '.\r\n';
+        resetTimeout();
         socket.write(Buffer.from(rawStr, 'binary'));
       };
 
@@ -219,7 +220,7 @@ class DirectMta {
 
           while (buffer.includes('\n')) {
             const lineIdx = buffer.indexOf('\n');
-            const line = buffer.substring(0, lineIdx + 1);
+            const line = buffer.substring(0, lineIdx).trim();
             buffer = buffer.substring(lineIdx + 1);
 
             const match = line.match(/^(\d{3})([ -])(.*)$/);
@@ -228,7 +229,7 @@ class DirectMta {
               const isContinuation = match[2] === '-';
 
               if (!sock._replyLines) sock._replyLines = [];
-              sock._replyLines.push(line.trim());
+              sock._replyLines.push(match[3] ? match[3].trim() : line);
 
               if (!isContinuation) {
                 const complete = sock._replyLines;
