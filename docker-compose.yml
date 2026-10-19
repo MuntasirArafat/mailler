@@ -15,7 +15,7 @@ services:
       - PORT=3000
       - INBOUND_PORT=25
       - CONCURRENCY=25
-      - HELO_HOST=mail.yourdomain.com
+      - HELO_HOST=mail.exauraa.com
       # Set your secret API password below:
       - API_PASSWORD=sec_change_this_to_a_secure_password
     volumes:
