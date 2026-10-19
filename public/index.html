@@ -10,19 +10,16 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #f8fafc;
-      --card-bg: #ffffff;
-      --border: #e2e8f0;
-      --border-subtle: #edf2f7;
-      --text-main: #0f172a;
-      --text-muted: #64748b;
-      --text-light: #94a3b8;
+      --bg: #ffffff;
+      --text-main: #09090b;
+      --text-muted: #71717a;
+      --text-subtle: #a1a1aa;
+      --border: #e4e4e7;
+      --border-subtle: #f4f4f5;
       --primary: #4f46e5;
       --primary-light: #eef2ff;
-      --emerald: #10b981;
-      --emerald-bg: #ecfdf5;
-      --emerald-border: #a7f3d0;
-      --sky: #0284c7;
+      --code-bg: #18181b;
+      --code-text: #fafafa;
       --font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
       --font-mono: 'JetBrains Mono', monospace;
     }
@@ -35,11 +32,6 @@
 
     body {
       background-color: var(--bg);
-      background-image: 
-        radial-gradient(#cbd5e1 0.75px, transparent 0.75px),
-        radial-gradient(#e2e8f0 0.75px, var(--bg) 0.75px);
-      background-size: 30px 30px;
-      background-position: 0 0, 15px 15px;
       color: var(--text-main);
       font-family: var(--font);
       min-height: 100vh;
@@ -47,212 +39,154 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 32px 16px;
+      padding: 40px 20px;
       line-height: 1.5;
+      position: relative;
+      overflow-x: hidden;
     }
 
-    /* Ambient Soft Glows for Light Theme */
-    .ambient-glow {
-      position: fixed;
-      border-radius: 50%;
-      filter: blur(140px);
-      pointer-events: none;
-      z-index: 0;
-      opacity: 0.6;
-    }
-    .glow-top {
-      top: -120px;
+    /* Ambient background gradient highlights */
+    .bg-glow {
+      position: absolute;
+      top: 0;
       left: 50%;
       transform: translateX(-50%);
-      width: 600px;
-      height: 350px;
-      background: radial-gradient(circle, #e0e7ff 0%, #dbeafe 60%, transparent 100%);
-    }
-
-    .container {
       width: 100%;
-      max-width: 640px;
-      position: relative;
-      z-index: 1;
+      max-width: 900px;
+      height: 480px;
+      background: radial-gradient(50% 60% at 50% 0%, rgba(99, 102, 241, 0.08) 0%, rgba(244, 244, 245, 0) 100%);
+      pointer-events: none;
+      z-index: 0;
     }
 
-    .main-card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 28px;
-      padding: 44px 40px;
-      box-shadow: 
-        0 1px 2px rgba(0, 0, 0, 0.04),
-        0 12px 32px -4px rgba(15, 23, 42, 0.06),
-        0 30px 60px -12px rgba(99, 102, 241, 0.08);
+    .main-wrap {
+      width: 100%;
+      max-width: 580px;
       text-align: center;
       position: relative;
-      overflow: hidden;
-      animation: fadeIn 0.5s ease-out;
+      z-index: 1;
+      animation: fadeIn 0.4s ease-out;
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(12px); }
+      from { opacity: 0; transform: translateY(8px); }
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* Kawaii Logo Display */
-    .logo-wrapper {
+    /* Kawaii Logo */
+    .logo-container {
+      margin: 0 auto 24px;
+      width: 110px;
+      height: 110px;
       position: relative;
-      width: 108px;
-      height: 108px;
-      margin: 0 auto 20px;
-      border-radius: 26px;
-      background: #ffffff;
-      padding: 6px;
-      border: 1px solid var(--border);
-      box-shadow: 
-        0 8px 24px -4px rgba(15, 23, 42, 0.08),
-        0 2px 6px rgba(0, 0, 0, 0.04);
-      animation: float 4s ease-in-out infinite;
+      animation: gentleFloat 4s ease-in-out infinite;
     }
 
-    @keyframes float {
+    @keyframes gentleFloat {
       0%, 100% { transform: translateY(0px); }
-      50% { transform: translateY(-6px); }
+      50% { transform: translateY(-5px); }
     }
 
-    .logo-img {
+    .brand-logo {
       width: 100%;
       height: 100%;
       object-fit: cover;
-      border-radius: 20px;
+      border-radius: 28px;
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 25px -4px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.03);
     }
 
-    .header-badges {
+    /* Badges */
+    .badge-row {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 10px;
-      margin-bottom: 14px;
-      flex-wrap: wrap;
-    }
-
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
       gap: 8px;
-      padding: 5px 14px;
-      background: var(--emerald-bg);
-      border: 1px solid var(--emerald-border);
-      border-radius: 9999px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: #065f46;
+      margin-bottom: 16px;
     }
 
-    .pulse-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--emerald);
-      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.25);
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-      70% { box-shadow: 0 0 0 7px rgba(16, 185, 129, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-    }
-
-    .version-badge {
+    .status-pill {
       display: inline-flex;
       align-items: center;
-      padding: 5px 12px;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 9999px;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      color: #15803d;
+      font-size: 0.76rem;
+      font-weight: 600;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+    }
+
+    .version-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 9999px;
       background: var(--primary-light);
       border: 1px solid #c7d2fe;
-      border-radius: 9999px;
-      font-size: 0.78rem;
-      font-weight: 700;
       color: var(--primary);
+      font-size: 0.74rem;
       font-family: var(--font-mono);
+      font-weight: 700;
       letter-spacing: 0.2px;
     }
 
-    h1.brand-title {
-      font-size: 2.15rem;
+    /* Brand Title & Info */
+    h1.brand-name {
+      font-size: 2.35rem;
       font-weight: 800;
       color: var(--text-main);
-      letter-spacing: -0.8px;
-      margin-bottom: 8px;
+      letter-spacing: -0.9px;
       line-height: 1.15;
+      margin-bottom: 10px;
     }
 
-    p.brand-description {
-      font-size: 0.98rem;
+    p.brand-info {
+      font-size: 1.02rem;
       color: var(--text-muted);
-      max-width: 490px;
-      margin: 0 auto 30px;
+      max-width: 480px;
+      margin: 0 auto 32px;
+      line-height: 1.55;
       font-weight: 450;
     }
 
-    /* Terminal / Command Box */
-    .terminal-container {
-      background: #0f172a;
-      border-radius: 18px;
-      padding: 18px 22px;
-      text-align: left;
-      margin-bottom: 28px;
-      box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.2);
-      border: 1px solid #1e293b;
-      position: relative;
-    }
-
-    .terminal-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 12px;
-      border-bottom: 1px solid #1e293b;
-      padding-bottom: 10px;
-    }
-
-    .terminal-dots {
-      display: flex;
-      gap: 6px;
-    }
-
-    .dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-    }
-    .dot-red { background: #ef4444; }
-    .dot-yellow { background: #f59e0b; }
-    .dot-green { background: #10b981; }
-
-    .terminal-label {
-      font-size: 0.72rem;
-      font-family: var(--font-mono);
-      color: #94a3b8;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-    }
-
-    .terminal-body {
+    /* Command Area (Minimal, No card, No dots) */
+    .command-box {
+      background: var(--code-bg);
+      border: 1px solid #27272a;
+      border-radius: 14px;
+      padding: 14px 18px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      margin: 0 auto 28px;
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.12);
+      transition: border-color 0.2s ease;
     }
 
-    .command-line {
+    .command-box:hover {
+      border-color: #3f3f46;
+    }
+
+    .command-code {
       display: flex;
       align-items: center;
       gap: 10px;
       font-family: var(--font-mono);
       font-size: 0.95rem;
-      color: #f8fafc;
+      color: var(--code-text);
       overflow-x: auto;
       white-space: nowrap;
-      padding-bottom: 2px;
     }
 
     .command-prompt {
@@ -262,16 +196,17 @@
     }
 
     .command-text {
-      color: #f1f5f9;
+      color: #f4f4f5;
       font-weight: 500;
+      letter-spacing: -0.2px;
     }
 
-    .copy-button {
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #cbd5e1;
-      border-radius: 10px;
-      padding: 7px 14px;
+    .copy-btn {
+      background: #27272a;
+      border: 1px solid #3f3f46;
+      color: #d4d4d8;
+      border-radius: 8px;
+      padding: 6px 14px;
       font-size: 0.78rem;
       font-weight: 600;
       font-family: var(--font);
@@ -283,198 +218,170 @@
       flex-shrink: 0;
     }
 
-    .copy-button:hover {
-      background: #334155;
+    .copy-btn:hover {
+      background: #3f3f46;
       color: #ffffff;
-      border-color: #475569;
+      border-color: #52525b;
     }
 
-    .copy-button:active {
+    .copy-btn:active {
       transform: scale(0.96);
     }
 
-    .copy-button.copied {
+    .copy-btn.copied {
       background: #065f46;
       border-color: #059669;
       color: #34d399;
     }
 
-    /* Metric Cards Grid */
-    .metrics-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-      margin-bottom: 28px;
-    }
-
-    @media (max-width: 580px) {
-      .main-card { padding: 32px 20px; }
-      .metrics-grid { grid-template-columns: 1fr; }
-    }
-
-    .metric-card {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 16px 14px;
-      text-align: center;
-      transition: all 0.2s ease;
-    }
-
-    .metric-card:hover {
-      border-color: #cbd5e1;
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
-    }
-
-    .metric-name {
-      font-size: 0.75rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      margin-bottom: 6px;
-    }
-
-    .metric-value {
-      font-size: 1.15rem;
-      font-weight: 700;
-      font-family: var(--font-mono);
-      color: var(--text-main);
-    }
-
-    /* Features Pills */
-    .features-list {
+    /* Command Quick Options */
+    .command-options {
       display: flex;
-      flex-wrap: wrap;
+      align-items: center;
       justify-content: center;
       gap: 8px;
-      padding-top: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 36px;
     }
 
-    .feature-tag {
-      background: #f1f5f9;
-      border: 1px solid #e2e8f0;
-      color: #475569;
-      padding: 6px 12px;
-      border-radius: 10px;
+    .cmd-option-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 5px 11px;
       font-size: 0.78rem;
-      font-weight: 600;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .cmd-option-btn:hover {
+      background: #f4f4f5;
+      color: var(--text-main);
+      border-color: #d4d4d8;
+    }
+
+    .cmd-option-btn.active {
+      background: var(--text-main);
+      color: #ffffff;
+      border-color: var(--text-main);
+    }
+
+    /* Minimal feature indicators */
+    .features-row {
       display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      flex-wrap: wrap;
+    }
+
+    .feature-item {
+      display: inline-flex;
       align-items: center;
       gap: 6px;
     }
 
-    .feature-tag span {
-      color: var(--emerald);
+    .feature-check {
+      color: #10b981;
       font-weight: 800;
+      font-size: 0.85rem;
     }
 
     footer {
-      text-align: center;
-      margin-top: 24px;
+      margin-top: 48px;
       font-size: 0.82rem;
-      color: var(--text-light);
-      position: relative;
-      z-index: 1;
+      color: var(--text-subtle);
     }
 
     footer a {
       color: var(--text-muted);
       text-decoration: none;
-      font-weight: 600;
+      font-weight: 500;
       transition: color 0.15s ease;
     }
 
     footer a:hover {
-      color: var(--primary);
+      color: var(--text-main);
     }
   </style>
 </head>
 <body>
-  <div class="ambient-glow glow-top"></div>
+  <div class="bg-glow"></div>
 
-  <div class="container">
-    <main class="main-card">
-      
-      <!-- Kawaii Logo Avatar -->
-      <div class="logo-wrapper">
-        <img src="/logo.png" alt="MailSources Kawaii Logo" class="logo-img" id="brand-logo" onerror="this.onerror=null; this.src='https://api.iconify.design/twemoji:incoming-envelope.svg';">
+  <div class="main-wrap">
+    <!-- Kawaii Logo -->
+    <div class="logo-container">
+      <img 
+        src="/logo.png" 
+        alt="MailSources Kawaii Logo" 
+        class="brand-logo" 
+        id="brand-logo"
+        onerror="this.onerror=null; this.src='https://api.iconify.design/twemoji:incoming-envelope.svg';"
+      >
+    </div>
+
+    <!-- Status & Version -->
+    <div class="badge-row">
+      <div class="status-pill">
+        <span class="status-dot"></span>
+        <span id="status-label">Online</span>
       </div>
+      <div class="version-pill">v2.4.0</div>
+    </div>
 
-      <!-- Badges -->
-      <div class="header-badges">
-        <div class="status-badge">
-          <div class="pulse-dot"></div>
-          <span id="status-text">Server Online & Active</span>
-        </div>
-        <div class="version-badge">v2.4.0</div>
+    <!-- Brand Name & Description -->
+    <h1 class="brand-name">MailSources</h1>
+    <p class="brand-info">
+      Direct MTA mail engine with native DKIM signing, SPF alignment, and SQLite queue management.
+    </p>
+
+    <!-- Command Area (No card framing, No 3 dots) -->
+    <div class="command-box">
+      <div class="command-code">
+        <span class="command-prompt">$</span>
+        <span class="command-text" id="cmd-string">mailsource -h</span>
       </div>
+      <button class="copy-btn" id="copy-btn" onclick="copyCommand()" aria-label="Copy command">
+        <svg id="copy-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+        <span id="copy-text">Copy</span>
+      </button>
+    </div>
 
-      <!-- Heading & Description -->
-      <h1 class="brand-title">MailSources</h1>
-      <p class="brand-description">
-        High-throughput direct MTA mail server with native DKIM, SPF alignment, and built-in SQLite queue engine.
-      </p>
+    <!-- Quick Switcher for helpful commands -->
+    <div class="command-options">
+      <button class="cmd-option-btn active" onclick="setCommand('mailsource -h', this)">mailsource -h</button>
+      <button class="cmd-option-btn" onclick="setCommand('mailsource status', this)">mailsource status</button>
+      <button class="cmd-option-btn" onclick="setCommand('mailsource test-port25', this)">mailsource test-port25</button>
+      <button class="cmd-option-btn" onclick="setCommand('mailsource send --to user@example.com --subject &quot;Hi&quot;', this)">mailsource send ...</button>
+    </div>
 
-      <!-- Terminal Quick Command Box -->
-      <div class="terminal-container">
-        <div class="terminal-header">
-          <div class="terminal-dots">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-yellow"></span>
-            <span class="dot dot-green"></span>
-          </div>
-          <span class="terminal-label">CLI Terminal</span>
-        </div>
-        <div class="terminal-body">
-          <div class="command-line">
-            <span class="command-prompt">$</span>
-            <span class="command-text" id="cmd-string">mailsource -h</span>
-          </div>
-          <button class="copy-button" id="copy-btn" onclick="copyCommand()" aria-label="Copy command">
-            <svg id="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-            <span id="copy-text">Copy</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Key Metrics -->
-      <div class="metrics-grid">
-        <div class="metric-card">
-          <div class="metric-name">Direct MTA</div>
-          <div class="metric-value" style="color: #4f46e5;">Port 25 (MX)</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-name">Inbound SMTP</div>
-          <div class="metric-value" style="color: #0284c7;">Port 2525</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-name">Active Queue</div>
-          <div class="metric-value" id="queue-count" style="color: #059669;">Ready</div>
-        </div>
-      </div>
-
-      <!-- Compliance & Feature Pills -->
-      <div class="features-list">
-        <div class="feature-tag"><span>✓</span> RSA 2048 DKIM</div>
-        <div class="feature-tag"><span>✓</span> SPF Alignment</div>
-        <div class="feature-tag"><span>✓</span> RFC 8058 One-Click</div>
-        <div class="feature-tag"><span>✓</span> FCrDNS Certified</div>
-      </div>
-
-    </main>
+    <!-- Minimal feature indicators -->
+    <div class="features-row">
+      <span class="feature-item"><span class="feature-check">✓</span> RSA-2048 DKIM</span>
+      <span class="feature-item"><span class="feature-check">✓</span> SPF Alignment</span>
+      <span class="feature-item"><span class="feature-check">✓</span> Direct MX Delivery</span>
+      <span class="feature-item"><span class="feature-check">✓</span> One-Click List-Unsubscribe</span>
+    </div>
 
     <footer>
-      <span>Powered by <a href="https://github.com/MuntasirArafat/mailler" target="_blank" rel="noopener">MailSources Engine</a> &bull; Production Ready</span>
+      <span>MailSources &bull; <a href="https://github.com/MuntasirArafat/mailler" target="_blank" rel="noopener">GitHub</a></span>
     </footer>
   </div>
 
   <script>
-    // Copy Command to Clipboard
+    function setCommand(cmd, btn) {
+      document.getElementById('cmd-string').textContent = cmd;
+      document.querySelectorAll('.cmd-option-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+    }
+
     function copyCommand() {
       const cmd = document.getElementById('cmd-string').textContent;
       navigator.clipboard.writeText(cmd).then(() => {
@@ -483,37 +390,26 @@
         const icon = document.getElementById('copy-icon');
 
         btn.classList.add('copied');
-        text.textContent = 'Copied! ✓';
+        text.textContent = 'Copied!';
         icon.innerHTML = '<polyline points="20 6 9 17 4 12"></polyline>';
 
         setTimeout(() => {
           btn.classList.remove('copied');
           text.textContent = 'Copy';
           icon.innerHTML = '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>';
-        }, 2200);
+        }, 2000);
       });
     }
 
-    // Dynamic Live Health & Queue Polling
-    function fetchHealth() {
-      fetch('/api/health')
-        .then(res => res.json())
-        .then(data => {
-          if (data.status === 'healthy') {
-            document.getElementById('status-text').textContent = 'Server Online & Active';
-          }
-          if (data.queue) {
-            const total = (data.queue.total || 0);
-            document.getElementById('queue-count').textContent = total > 0 ? `${total} Jobs` : 'Healthy';
-          }
-        })
-        .catch(() => {
-          document.getElementById('status-text').textContent = 'Server Online';
-        });
-    }
-
-    fetchHealth();
-    setInterval(fetchHealth, 10000);
+    // Health check ping
+    fetch('/api/health')
+      .then(r => r.json())
+      .then(d => {
+        if (d.status === 'healthy') {
+          document.getElementById('status-label').textContent = 'Online & Active';
+        }
+      })
+      .catch(() => {});
   </script>
 </body>
 </html>
