@@ -14,13 +14,18 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install production dependencies
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 # Copy application code
 COPY . .
 
 # Ensure data and config directories exist
 RUN mkdir -p /app/data /app/config
+
+# Global CLI symlink inside container
+RUN chmod +x /app/bin/mailsource.js && \
+    ln -sf /app/bin/mailsource.js /usr/local/bin/mailsource && \
+    ln -sf /app/bin/mailsource.js /usr/local/bin/mailsouce
 
 # Expose ports:
 # 25   - Standard Inbound SMTP
