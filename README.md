@@ -30,6 +30,27 @@ A high-performance, production-ready **Direct MTA Mail Server** in Node.js backe
 
 ---
 
+## 🗄️ MongoDB Database Architecture (Mongoose Models & 2 Modes)
+
+The database layer is managed by **Mongoose** in [`src/db.js`](file:///Users/muntasirarafat/Documents/mailserver/src/db.js).
+
+### Two MongoDB Operational Modes (`MONGO_MODE`):
+
+1. **Local Mode (`MONGO_MODE=local`, Default)**:
+   - Connects to the local MongoDB 7 container included in `docker-compose.yml`.
+   - URI: `MONGO_LOCAL_URI=mongodb://127.0.0.1:27017/mailserver`
+   - Data is persisted on the VPS host at `./data/mongo`.
+
+2. **Remote Mode (`MONGO_MODE=remote`)**:
+   - Connects to an external MongoDB Atlas cluster or central managed database.
+   - URI: `MONGO_REMOTE_URI=mongodb+srv://user:password@cluster.mongodb.net/mailserver`
+
+### Mongoose Models Defined in [`src/db.js`](file:///Users/muntasirarafat/Documents/mailserver/src/db.js):
+- **`MailJob`**: Tracks outbound mail lifecycle (`queued` ➔ `processing` ➔ `completed` / `failed`), retry attempts, exponential backoff, hard bounces, and delivery responses.
+- **`InboundMessage`**: Stores incoming emails received on Port 25 with parsed MIME, sender, recipient, plain text, HTML, and base64 attachments.
+
+---
+
 ## 🚀 1-Click Docker Setup (Mail Server + MongoDB)
 
 The included `docker-compose.yml` automatically spins up both the **MongoDB 7** container and the **Mail Server** together with data persistence.
@@ -44,7 +65,12 @@ Your `.env` file:
 ```env
 PORT=3000
 API_PASSWORD=ar@51/er
-MONGODB_URI=mongodb://127.0.0.1:27017/mailserver
+
+# MongoDB Modes: 'local' (default) or 'remote'
+MONGO_MODE=local
+MONGO_LOCAL_URI=mongodb://127.0.0.1:27017/mailserver
+MONGO_REMOTE_URI=mongodb+srv://user:pass@cluster.mongodb.net/mailserver
+
 HELO_HOST=mail.exauraa.com
 INBOUND_PORT=25
 CONCURRENCY=25

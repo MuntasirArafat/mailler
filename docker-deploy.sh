@@ -109,10 +109,12 @@ if [ "$HAS_ENV_FILE" = true ] && [ -z "$INPUT_PORT" ] && [ -z "$INPUT_PASS" ] &&
   # Use values from .env
   API_PORT="${PORT:-3000}"
   API_PASSWORD="${API_PASSWORD:-ar@51/er}"
-  MONGO_URI="${MONGODB_URI:-mongodb://127.0.0.1:27017/mailserver}"
+  MONGO_MODE="${MONGO_MODE:-local}"
+  MONGO_URI="${MONGODB_URI:-${MONGO_LOCAL_URI:-mongodb://127.0.0.1:27017/mailserver}}"
   echo -e "${CYAN}→ Loaded configuration from .env:${NC}"
   echo -e "   • API Port        : ${BOLD}${API_PORT}${NC}"
   echo -e "   • API Password    : ${BOLD}${API_PASSWORD}${NC}"
+  echo -e "   • MongoDB Mode    : ${BOLD}${MONGO_MODE}${NC}"
   echo -e "   • MongoDB URI     : ${BOLD}${MONGO_URI}${NC}"
 else
   echo -e "\n${YELLOW}${BOLD}⚙️  Configure Mail Server & MongoDB Settings:${NC}"
@@ -153,26 +155,37 @@ else
     fi
   fi
 
-  # 3. MongoDB URI
-  if [ -n "$INPUT_MONGO" ]; then
-    MONGO_URI="$INPUT_MONGO"
-  elif [ -n "$MONGODB_URI" ]; then
-    MONGO_URI="$MONGODB_URI"
+  # 3. MongoDB Mode & URI
+  MONGO_MODE="${MONGO_MODE:-local}"
+  read -p "Select MongoDB Mode [local/remote, default: local]: " USER_MODE
+  if [ -n "$USER_MODE" ]; then
+    MONGO_MODE="$USER_MODE"
+  fi
+
+  if [ "$MONGO_MODE" = "remote" ]; then
+    read -p "Enter Remote MongoDB URI (e.g. mongodb+srv://...): " USER_REMOTE
+    MONGO_REMOTE_URI="$USER_REMOTE"
+    MONGO_LOCAL_URI="mongodb://127.0.0.1:27017/mailserver"
   else
-    read -p "Enter MongoDB URI [default: mongodb://127.0.0.1:27017/mailserver]: " USER_MONGO
-    MONGO_URI=${USER_MONGO:-mongodb://127.0.0.1:27017/mailserver}
+    MONGO_MODE="local"
+    MONGO_LOCAL_URI="${MONGO_LOCAL_URI:-mongodb://127.0.0.1:27017/mailserver}"
+    MONGO_REMOTE_URI=""
   fi
 
   echo -e "\n${GREEN}✔ Configured settings:${NC}"
   echo -e "   • API Port        : ${BOLD}${API_PORT}${NC}"
   echo -e "   • API Password    : ${BOLD}${API_PASSWORD}${NC}"
-  echo -e "   • MongoDB URI     : ${BOLD}${MONGO_URI}${NC}"
+  echo -e "   • MongoDB Mode    : ${BOLD}${MONGO_MODE}${NC}"
+  echo -e "   • Active URI      : ${BOLD}${MONGO_REMOTE_URI:-$MONGO_LOCAL_URI}${NC}"
 
   # Write to .env for docker-compose
   cat << ENV_EOF > .env
 PORT=${API_PORT}
 API_PASSWORD=${API_PASSWORD}
-MONGODB_URI=${MONGO_URI}
+MONGO_MODE=${MONGO_MODE}
+MONGO_LOCAL_URI=${MONGO_LOCAL_URI}
+MONGO_REMOTE_URI=${MONGO_REMOTE_URI}
+MONGODB_URI=${MONGO_REMOTE_URI:-$MONGO_LOCAL_URI}
 INBOUND_PORT=25
 HELO_HOST=mail.exauraa.com
 CONCURRENCY=25

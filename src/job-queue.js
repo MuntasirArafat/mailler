@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { jobsCollection } = require('./db');
+const { MailJob } = require('./db');
 const SpamShield = require('./spam-shield');
 
 class JobQueue {
@@ -18,7 +18,7 @@ class JobQueue {
   start() {
     if (this.isRunning) return;
     this.isRunning = true;
-    console.log(`[JobQueue] 🚀 Production MongoDB Queue Worker started (concurrency: ${this.concurrency})`);
+    console.log(`[JobQueue] 🚀 Production Mongoose Queue Worker started (concurrency: ${this.concurrency})`);
 
     // Recover any jobs that were stuck in 'processing' when the server stopped/restarted
     this.recoverStuckJobs().catch(err => {
@@ -42,8 +42,7 @@ class JobQueue {
    */
   async recoverStuckJobs() {
     try {
-      const col = jobsCollection();
-      const res = await col.updateMany(
+      const res = await MailJob.updateMany(
         { status: 'processing' },
         {
           $set: {
@@ -62,7 +61,6 @@ class JobQueue {
    * Enqueue a single mail job
    */
   async enqueue(mailData) {
-    const col = jobsCollection();
     const jobId = mailData.jobId || 'job_' + crypto.randomBytes(12).toString('hex');
     const recipient = mailData.to;
 
@@ -93,13 +91,11 @@ class JobQueue {
       messageId: null,
       host: null,
       durationMs: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
       completedAt: null,
       failedAt: null
     };
 
-    await col.insertOne(jobDoc);
+    await MailJob.create(jobDoc);
     console.log(`[JobQueue] 📥 Enqueued job ${jobId} to ${recipient} (subject: "${jobDoc.payload.subject}")`);
 
     // Wake up worker immediately
@@ -121,7 +117,6 @@ class JobQueue {
       throw new Error('Emails array must not be empty');
     }
 
-    const col = jobsCollection();
     const now = new Date();
     const docs = [];
 
@@ -154,14 +149,12 @@ class JobQueue {
         messageId: null,
         host: null,
         durationMs: null,
-        createdAt: now,
-        updatedAt: now,
         completedAt: null,
         failedAt: null
       });
     }
 
-    const result = await col.insertMany(docs);
+    await MailJob.insertMany(docs);
     console.log(`[JobQueue] 📥 Batch enqueued ${docs.length} jobs.`);
 
     this.triggerWorkers();
@@ -204,16 +197,14 @@ class JobQueue {
   }
 
   /**
-   * Atomic checkout and execution of the next available job
+   * Atomic checkout and execution of the next available job using Mongoose findOneAndUpdate
    */
   async processNextJob() {
-    const col = jobsCollection();
     const now = new Date();
 
     let job = null;
     try {
-      // Atomic find and update: lock job from 'queued' -> 'processing'
-      job = await col.findOneAndUpdate(
+      job = await MailJob.findOneAndUpdate(
         {
           status: 'queued',
           nextRetryAt: { $lte: now }
@@ -221,14 +212,13 @@ class JobQueue {
         {
           $set: {
             status: 'processing',
-            lastAttemptAt: now,
-            updatedAt: now
+            lastAttemptAt: now
           },
           $inc: { attempts: 1 }
         },
         {
           sort: { priority: -1, nextRetryAt: 1, createdAt: 1 },
-          returnDocument: 'after'
+          new: true
         }
       );
     } catch (e) {
@@ -263,7 +253,7 @@ class JobQueue {
       const durationMs = Date.now() - startTime;
 
       // 3. Mark Job Completed
-      await col.updateOne(
+      await MailJob.updateOne(
         { jobId: job.jobId },
         {
           $set: {
@@ -272,8 +262,7 @@ class JobQueue {
             messageId: prepared.messageId,
             host: sendResult.host,
             durationMs,
-            completedAt: new Date(),
-            updatedAt: new Date()
+            completedAt: new Date()
           }
         }
       );
@@ -295,10 +284,9 @@ class JobQueue {
   }
 
   /**
-   * Robust error classification & retry backoff calculation
+   * Error classification & exponential retry backoff
    */
   async handleJobFailure(job, err) {
-    const col = jobsCollection();
     const errorMessage = err.message || 'Unknown delivery failure';
     const errorString = String(err.response || err.message || '');
 
@@ -314,19 +302,17 @@ class JobQueue {
     };
 
     if (isHardBounce || attempts >= maxRetries) {
-      // Mark as permanent failure
       const reason = isHardBounce
         ? `Permanent failure (Hard Bounce 5xx): ${errorMessage}`
         : `Exceeded maximum retries (${maxRetries}): ${errorMessage}`;
 
-      await col.updateOne(
+      await MailJob.updateOne(
         { jobId: job.jobId },
         {
           $set: {
             status: 'failed',
             lastError: reason,
-            failedAt: new Date(),
-            updatedAt: new Date()
+            failedAt: new Date()
           },
           $push: {
             errorHistory: errorEntry
@@ -336,19 +322,17 @@ class JobQueue {
 
       console.warn(`[JobQueue] ✖ Job ${job.jobId} FAILED PERMANENTLY: ${reason}`);
     } else {
-      // Soft failure: schedule next retry with exponential backoff
       const intervalIdx = Math.min(attempts - 1, this.retryIntervals.length - 1);
       const delaySeconds = this.retryIntervals[intervalIdx] || 300;
       const nextRetryAt = new Date(Date.now() + delaySeconds * 1000);
 
-      await col.updateOne(
+      await MailJob.updateOne(
         { jobId: job.jobId },
         {
           $set: {
             status: 'queued',
             nextRetryAt,
-            lastError: errorMessage,
-            updatedAt: new Date()
+            lastError: errorMessage
           },
           $push: {
             errorHistory: errorEntry
@@ -356,7 +340,7 @@ class JobQueue {
         }
       );
 
-      console.log(`[JobQueue] ⏳ Job ${job.jobId} soft failed (${errorMessage}). Scheduled retry #${attempts + 1} in ${delaySeconds}s (at ${nextRetryAt.toISOString()})`);
+      console.log(`[JobQueue] ⏳ Job ${job.jobId} soft failed (${errorMessage}). Scheduled retry #${attempts + 1} in ${delaySeconds}s`);
     }
   }
 
@@ -364,7 +348,6 @@ class JobQueue {
    * Query jobs with pagination and filters
    */
   async getJobs({ status = null, recipient = null, limit = 50, offset = 0, search = null } = {}) {
-    const col = jobsCollection();
     const filter = {};
 
     if (status && status !== 'all') {
@@ -381,13 +364,13 @@ class JobQueue {
       ];
     }
 
-    const total = await col.countDocuments(filter);
-    const jobs = await col
+    const total = await MailJob.countDocuments(filter);
+    const jobs = await MailJob
       .find(filter)
       .sort({ createdAt: -1 })
       .skip(offset)
       .limit(Math.min(limit, 200))
-      .toArray();
+      .lean();
 
     return {
       total,
@@ -398,19 +381,16 @@ class JobQueue {
   }
 
   async getJobById(jobId) {
-    const col = jobsCollection();
-    return await col.findOne({ jobId });
+    return await MailJob.findOne({ jobId }).lean();
   }
 
   async retryJob(jobId) {
-    const col = jobsCollection();
-    const result = await col.updateOne(
+    const result = await MailJob.updateOne(
       { jobId },
       {
         $set: {
           status: 'queued',
-          nextRetryAt: new Date(),
-          updatedAt: new Date()
+          nextRetryAt: new Date()
         }
       }
     );
@@ -423,14 +403,12 @@ class JobQueue {
   }
 
   async retryAllFailed() {
-    const col = jobsCollection();
-    const result = await col.updateMany(
+    const result = await MailJob.updateMany(
       { status: 'failed' },
       {
         $set: {
           status: 'queued',
-          nextRetryAt: new Date(),
-          updatedAt: new Date()
+          nextRetryAt: new Date()
         }
       }
     );
@@ -442,19 +420,17 @@ class JobQueue {
   }
 
   async deleteJob(jobId) {
-    const col = jobsCollection();
-    const result = await col.deleteOne({ jobId });
+    const result = await MailJob.deleteOne({ jobId });
     return result.deletedCount > 0;
   }
 
   async getStats() {
-    const col = jobsCollection();
     const [queued, processing, completed, failed, total] = await Promise.all([
-      col.countDocuments({ status: 'queued' }),
-      col.countDocuments({ status: 'processing' }),
-      col.countDocuments({ status: 'completed' }),
-      col.countDocuments({ status: 'failed' }),
-      col.estimatedDocumentCount()
+      MailJob.countDocuments({ status: 'queued' }),
+      MailJob.countDocuments({ status: 'processing' }),
+      MailJob.countDocuments({ status: 'completed' }),
+      MailJob.countDocuments({ status: 'failed' }),
+      MailJob.countDocuments({})
     ]);
 
     return {

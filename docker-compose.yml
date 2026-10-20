@@ -25,7 +25,10 @@ services:
       - CONCURRENCY=${CONCURRENCY:-25}
       - HELO_HOST=${HELO_HOST:-mail.exauraa.com}
       - API_PASSWORD=${API_PASSWORD:-ar@51/er}
-      - MONGODB_URI=${MONGODB_URI:-mongodb://127.0.0.1:27017/mailserver}
+      - MONGO_MODE=${MONGO_MODE:-local}
+      - MONGO_LOCAL_URI=${MONGO_LOCAL_URI:-mongodb://127.0.0.1:27017/mailserver}
+      - MONGO_REMOTE_URI=${MONGO_REMOTE_URI:-}
+      - MONGODB_URI=${MONGODB_URI:-}
     volumes:
       - ./data:/app/data
       - ./config:/app/config

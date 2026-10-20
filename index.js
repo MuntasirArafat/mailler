@@ -23,6 +23,8 @@ function parseArgs() {
       parsed.inboundPort = parseInt(args[++i], 10);
     } else if (arg === '--mongo' || arg === '--mongodb') {
       parsed.mongodbUri = args[++i];
+    } else if (arg === '--mongo-mode') {
+      parsed.mongoMode = args[++i];
     } else if (arg === '--concurrency' || arg === '-c') {
       parsed.concurrency = parseInt(args[++i], 10);
     }
@@ -58,11 +60,14 @@ if (!API_PASSWORD) {
   console.log(`\n[Security] No API password configured. Generated secure key: ${API_PASSWORD}`);
 }
 
-// 3. Resolve HELO hostname, Inbound Port, Concurrency & MongoDB URI
+// 3. Resolve HELO hostname, Inbound Port, Concurrency & MongoDB Mode/URI
 const HELO_HOST = cliArgs.heloHost || process.env.HELO_HOST || savedConfig.heloHost || 'mail.exauraa.com';
 const INBOUND_PORT = cliArgs.inboundPort || parseInt(process.env.INBOUND_PORT || '', 10) || savedConfig.inboundPort || 25;
 const CONCURRENCY = cliArgs.concurrency || parseInt(process.env.CONCURRENCY || '', 10) || savedConfig.concurrency || 20;
-const MONGODB_URI = cliArgs.mongodbUri || process.env.MONGODB_URI || savedConfig.mongodbUri || 'mongodb://127.0.0.1:27017/mailserver';
+
+if (cliArgs.mongoMode) process.env.MONGO_MODE = cliArgs.mongoMode;
+const MONGO_MODE = db.getMongoMode();
+const MONGODB_URI = cliArgs.mongodbUri || db.getMongoUri();
 
 // Save configuration to config/server.json so it persists across restarts
 savedConfig = {
@@ -72,21 +77,22 @@ savedConfig = {
   heloHost: HELO_HOST,
   inboundPort: INBOUND_PORT,
   concurrency: CONCURRENCY,
+  mongoMode: MONGO_MODE,
   mongodbUri: MONGODB_URI,
   updatedAt: new Date().toISOString()
 };
 fs.writeFileSync(configFile, JSON.stringify(savedConfig, null, 2), 'utf8');
 
 async function start() {
-  // 4. Connect to MongoDB
+  // 4. Connect to MongoDB via Mongoose
   let mongoConnected = false;
   try {
     await db.connect(MONGODB_URI);
     mongoConnected = true;
   } catch (err) {
-    console.error(`\n⚠️  [MongoDB Warning] Could not connect to MongoDB at ${MONGODB_URI}: ${err.message}`);
+    console.error(`\n⚠️  [Mongoose Warning] Could not connect to MongoDB in [${MONGO_MODE.toUpperCase()}] mode at ${MONGODB_URI}: ${err.message}`);
     console.error(`   Job queue and MongoDB-backed inbox require a running MongoDB instance.`);
-    console.error(`   Ensure MongoDB is running or check your MONGODB_URI in .env.\n`);
+    console.error(`   Check MONGO_MODE ('local' or 'remote') and MONGO_LOCAL_URI / MONGO_REMOTE_URI in .env.\n`);
   }
 
   // 5. Initialize Direct MTA (Outbound mail engine: MX lookup -> Port 25 -> TLS delivery)
@@ -135,7 +141,7 @@ async function start() {
     console.log(`📡 REST API Endpoint     : http://localhost:${API_PORT}`);
     console.log(`🔒 API Authentication    : REQUIRED`);
     console.log(`🔑 Secret API Password   : ${API_PASSWORD}`);
-    console.log(`🗄️  Database              : MongoDB (${mongoConnected ? 'CONNECTED' : 'OFFLINE'})`);
+    console.log(`🗄️  Database              : MongoDB via Mongoose (${mongoConnected ? `CONNECTED [${MONGO_MODE.toUpperCase()}]` : 'OFFLINE'})`);
     console.log(`⚡ Outbound Engine       : Direct MX Delivery (Port 25 with STARTTLS)`);
     console.log(`📬 Job Queue Worker      : ${jobQueue ? `ACTIVE (${CONCURRENCY} workers, retry backoff)` : 'DISABLED (Requires MongoDB)'}`);
     console.log(`📥 Inbound Receiver      : ${inboundRunning ? `smtp://0.0.0.0:${INBOUND_PORT} (Saved to MongoDB)` : 'OFFLINE'}`);

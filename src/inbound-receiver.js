@@ -1,6 +1,6 @@
 const { SMTPServer } = require('smtp-server');
 const { simpleParser } = require('mailparser');
-const { inboundCollection } = require('./db');
+const { InboundMessage } = require('./db');
 
 class InboundReceiver {
   constructor(options = {}) {
@@ -68,14 +68,13 @@ class InboundReceiver {
               };
 
               try {
-                const col = inboundCollection();
-                await col.insertOne(emailRecord);
-                console.log(`[InboundReceiver] 📥 Saved incoming email from ${emailRecord.from_email} to ${emailRecord.to_email}: "${emailRecord.subject}" in MongoDB`);
+                await InboundMessage.create(emailRecord);
+                console.log(`[InboundReceiver] 📥 Saved incoming email from ${emailRecord.from_email} to ${emailRecord.to_email}: "${emailRecord.subject}" in Mongoose`);
               } catch (dbErr) {
-                console.error(`[InboundReceiver] ✖ Failed to save email into MongoDB:`, dbErr.message);
+                console.error(`[InboundReceiver] ✖ Failed to save email into Mongoose:`, dbErr.message);
               }
 
-              callback(null, 'OK: Message received and queued in MongoDB');
+              callback(null, 'OK: Message received and saved in database');
             })
             .catch(err => {
               console.error('[InboundReceiver] Error parsing incoming email:', err.message);
@@ -94,7 +93,7 @@ class InboundReceiver {
 
       this.server.listen(this.port, this.host, () => {
         isListening = true;
-        console.log(`[InboundReceiver] Inbound SMTP Server listening on ${this.host}:${this.port} (backed by MongoDB)`);
+        console.log(`[InboundReceiver] Inbound SMTP Server listening on ${this.host}:${this.port} (backed by Mongoose InboundMessage model)`);
         resolve(this.server);
       });
     });
@@ -115,7 +114,6 @@ class InboundReceiver {
   }
 
   static async getInbox({ limit = 50, offset = 0, to = null, from = null, query = null } = {}) {
-    const col = inboundCollection();
     const filter = {};
 
     if (to) {
@@ -132,13 +130,13 @@ class InboundReceiver {
       ];
     }
 
-    const total = await col.countDocuments(filter);
-    const emails = await col
+    const total = await InboundMessage.countDocuments(filter);
+    const emails = await InboundMessage
       .find(filter)
       .sort({ received_at: -1 })
       .skip(offset)
       .limit(Math.min(limit, 200))
-      .toArray();
+      .lean();
 
     return {
       total,
@@ -149,31 +147,25 @@ class InboundReceiver {
   }
 
   static async getEmail(id) {
-    const col = inboundCollection();
-    const numId = typeof id === 'string' ? parseInt(id, 10) : id;
-    return await col.findOne({
-      $or: [{ id: numId }, { message_id: id }]
-    });
+    const numId = typeof id === 'string' && /^\d+$/.test(id) ? parseInt(id, 10) : (typeof id === 'number' ? id : null);
+    const filter = numId ? { $or: [{ id: numId }, { message_id: id }] } : { message_id: id };
+    return await InboundMessage.findOne(filter).lean();
   }
 
   static async deleteEmail(id) {
-    const col = inboundCollection();
-    const numId = typeof id === 'string' ? parseInt(id, 10) : id;
-    const result = await col.deleteOne({
-      $or: [{ id: numId }, { message_id: id }]
-    });
+    const numId = typeof id === 'string' && /^\d+$/.test(id) ? parseInt(id, 10) : (typeof id === 'number' ? id : null);
+    const filter = numId ? { $or: [{ id: numId }, { message_id: id }] } : { message_id: id };
+    const result = await InboundMessage.deleteOne(filter);
     return result.deletedCount > 0;
   }
 
   static async clearInbox() {
-    const col = inboundCollection();
-    const result = await col.deleteMany({});
+    const result = await InboundMessage.deleteMany({});
     return result.deletedCount;
   }
 
   static async getStats() {
-    const col = inboundCollection();
-    const total = await col.estimatedDocumentCount();
+    const total = await InboundMessage.countDocuments({});
     return { total };
   }
 }

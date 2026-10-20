@@ -1,110 +1,155 @@
-const { MongoClient } = require('mongodb');
+const mongoose = require('mongoose');
 
-let client = null;
-let db = null;
-let isConnecting = false;
-
-const DEFAULT_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/mailserver';
-
-async function connect(uri = DEFAULT_URI) {
-  if (db) return db;
-  if (isConnecting) {
-    while (isConnecting) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    if (db) return db;
-  }
-
-  isConnecting = true;
-  try {
-    const mongoUri = uri || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/mailserver';
-    console.log(`[MongoDB] Connecting to ${mongoUri.replace(/:([^:@]{3,})@/, ':****@')}...`);
-    
-    client = new MongoClient(mongoUri, {
-      maxPoolSize: 50,
-      minPoolSize: 5,
-      serverSelectionTimeoutMS: 5000,
-      connectTimeoutMS: 10000,
-      socketTimeoutMS: 45000
-    });
-
-    await client.connect();
-    
-    // Extract db name from URI or default to 'mailserver'
-    const parsedUri = new URL(mongoUri.startsWith('mongodb://') || mongoUri.startsWith('mongodb+srv://') ? mongoUri : `mongodb://${mongoUri}`);
-    const dbName = (parsedUri.pathname && parsedUri.pathname.replace(/^\//, '')) || 'mailserver';
-    db = client.db(dbName);
-
-    console.log(`[MongoDB] ✔ Connected successfully to database: ${dbName}`);
-
-    // Create essential indexes for fast queuing and querying
-    await createIndexes();
-
-    return db;
-  } catch (err) {
-    console.error(`[MongoDB] ✖ Connection error: ${err.message}`);
-    throw err;
-  } finally {
-    isConnecting = false;
-  }
+// Determine MongoDB Mode: 'local' (default) or 'remote'
+function getMongoMode() {
+  return (process.env.MONGO_MODE || 'local').toLowerCase().trim();
 }
 
-async function createIndexes() {
-  if (!db) return;
-  try {
-    const jobs = db.collection('mail_jobs');
-    await jobs.createIndex({ status: 1, nextRetryAt: 1, priority: -1 }, { background: true });
-    await jobs.createIndex({ jobId: 1 }, { unique: true, background: true });
-    await jobs.createIndex({ recipient: 1 }, { background: true });
-    await jobs.createIndex({ createdAt: -1 }, { background: true });
-
-    const inbound = db.collection('inbound_messages');
-    await inbound.createIndex({ id: 1 }, { unique: true, background: true });
-    await inbound.createIndex({ to_email: 1 }, { background: true });
-    await inbound.createIndex({ from_email: 1 }, { background: true });
-    await inbound.createIndex({ received_at: -1 }, { background: true });
-
-    console.log(`[MongoDB] ✔ Production indexes verified on 'mail_jobs' & 'inbound_messages'`);
-  } catch (err) {
-    console.warn(`[MongoDB] Index setup warning: ${err.message}`);
+function getMongoUri() {
+  const mode = getMongoMode();
+  if (mode === 'remote') {
+    return process.env.MONGO_REMOTE_URI || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/mailserver';
   }
+  // Default: local
+  return process.env.MONGO_LOCAL_URI || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/mailserver';
 }
 
-function getDb() {
-  if (!db) {
-    throw new Error('Database not connected. Call connect() first.');
+// -----------------------------------------------------------------------------
+// Database Models
+// -----------------------------------------------------------------------------
+
+// 1. MailJob Model (Outbound Queue, Atomic Workers & Exponential Backoff Retries)
+const MailJobSchema = new mongoose.Schema(
+  {
+    jobId: { type: String, required: true, unique: true, index: true },
+    recipient: { type: String, required: true, index: true },
+    status: {
+      type: String,
+      enum: ['queued', 'processing', 'completed', 'failed'],
+      default: 'queued',
+      index: true
+    },
+    attempts: { type: Number, default: 0 },
+    maxRetries: { type: Number, default: 5 },
+    nextRetryAt: { type: Date, default: Date.now, index: true },
+    priority: { type: Number, default: 0, index: true },
+    payload: {
+      from: { type: String, required: true },
+      to: { type: String, required: true },
+      name: { type: String, default: null },
+      subject: { type: String, default: '' },
+      text: { type: String, default: '' },
+      html: { type: String, default: '' },
+      unsubscribeUrl: { type: String, default: null },
+      unsubscribeEmail: { type: String, default: null },
+      headers: { type: mongoose.Schema.Types.Mixed, default: {} },
+      dkim: { type: mongoose.Schema.Types.Mixed, default: null }
+    },
+    lastAttemptAt: { type: Date, default: null },
+    lastError: { type: String, default: null },
+    errorHistory: [
+      {
+        attempt: Number,
+        error: String,
+        timestamp: { type: Date, default: Date.now }
+      }
+    ],
+    response: { type: String, default: null },
+    messageId: { type: String, default: null },
+    host: { type: String, default: null },
+    durationMs: { type: Number, default: null },
+    completedAt: { type: Date, default: null },
+    failedAt: { type: Date, default: null }
+  },
+  {
+    timestamps: true
   }
-  return db;
-}
+);
 
-function jobsCollection() {
-  return getDb().collection('mail_jobs');
-}
+// High-performance compound indexes
+MailJobSchema.index({ status: 1, nextRetryAt: 1, priority: -1 });
+MailJobSchema.index({ createdAt: -1 });
 
-function inboundCollection() {
-  return getDb().collection('inbound_messages');
+// 2. InboundMessage Model (Received Emails via Port 25, Parsed MIME & Attachments)
+const InboundMessageSchema = new mongoose.Schema(
+  {
+    id: { type: Number, required: true, unique: true, index: true },
+    message_id: { type: String, default: null, index: true },
+    from_email: { type: String, default: '', index: true },
+    from_name: { type: String, default: '' },
+    to_email: { type: String, default: '', index: true },
+    subject: { type: String, default: '(No Subject)' },
+    text_body: { type: String, default: '' },
+    html_body: { type: String, default: '' },
+    headers: { type: mongoose.Schema.Types.Mixed, default: {} },
+    attachments: [
+      {
+        filename: String,
+        contentType: String,
+        size: Number,
+        contentBase64: String
+      }
+    ],
+    raw_size: { type: Number, default: 0 },
+    status: { type: String, default: 'received', index: true },
+    received_at: { type: Date, default: Date.now, index: true }
+  },
+  {
+    timestamps: true
+  }
+);
+
+InboundMessageSchema.index({ to_email: 1, received_at: -1 });
+InboundMessageSchema.index({ from_email: 1, received_at: -1 });
+
+// Register models safely
+const MailJob = mongoose.models.MailJob || mongoose.model('MailJob', MailJobSchema);
+const InboundMessage = mongoose.models.InboundMessage || mongoose.model('InboundMessage', InboundMessageSchema);
+
+// -----------------------------------------------------------------------------
+// Connection Management
+// -----------------------------------------------------------------------------
+
+async function connect(customUri = null) {
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
+
+  const mode = getMongoMode();
+  const uri = customUri || getMongoUri();
+  const maskedUri = uri.replace(/:([^:@]{3,})@/, ':****@');
+
+  console.log(`[Mongoose] Connecting in [${mode.toUpperCase()}] mode to: ${maskedUri}`);
+
+  await mongoose.connect(uri, {
+    maxPoolSize: 50,
+    minPoolSize: 5,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000
+  });
+
+  console.log(`[Mongoose] ✔ Connected successfully in [${mode.toUpperCase()}] mode to database: ${mongoose.connection.name}`);
+  return mongoose.connection;
 }
 
 function isConnected() {
-  return !!db;
+  return mongoose.connection.readyState === 1;
 }
 
 async function close() {
-  if (client) {
-    try {
-      await client.close();
-      db = null;
-      client = null;
-      console.log('[MongoDB] Connection closed.');
-    } catch (e) {}
+  if (mongoose.connection.readyState !== 0) {
+    await mongoose.disconnect();
+    console.log('[Mongoose] Disconnected.');
   }
 }
 
 module.exports = {
+  mongoose,
   connect,
-  getDb,
-  jobsCollection,
-  inboundCollection,
+  close,
   isConnected,
-  close
+  getMongoMode,
+  getMongoUri,
+  MailJob,
+  InboundMessage
 };
