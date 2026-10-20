@@ -381,12 +381,22 @@ class JobQueue {
   }
 
   async getJobById(jobId) {
-    return await MailJob.findOne({ jobId }).lean();
+    if (!jobId) return null;
+    const clean = String(jobId).trim();
+    return await MailJob.findOne({
+      $or: [
+        { jobId: clean },
+        { jobId: { $regex: '^' + clean } }
+      ]
+    }).lean();
   }
 
   async retryJob(jobId) {
+    const job = await this.getJobById(jobId);
+    if (!job) return false;
+
     const result = await MailJob.updateOne(
-      { jobId },
+      { jobId: job.jobId },
       {
         $set: {
           status: 'queued',

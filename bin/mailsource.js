@@ -37,25 +37,54 @@ ${colors.cyan}${colors.bold}📬 Mail Server CLI Tool (mailsource)${colors.reset
 ${colors.bold}USAGE:${colors.reset}
   mailsource <command> [options]
 
-${colors.bold}SEND COMMANDS:${colors.reset}
+${colors.bold}📤 SENDING COMMANDS:${colors.reset}
   mailsource send --to <email> --from <email> [--name "<name>"]
                   --subject "<subj>" --body "<text>" [--html "<html>"]
+                  ${colors.dim}Enqueue email for direct MTA delivery via MongoDB job queue${colors.reset}
 
-${colors.bold}SYSTEM & DIAGNOSTICS:${colors.reset}
-  mailsource status                Check server health, role, and uptime
+${colors.bold}⚡ QUEUE & WORKER JOBS (MongoDB):${colors.reset}
+  mailsource queue                  View active queue stats and recent jobs
+  mailsource queue <jobId>          View detailed status, delivery logs & error history for a job
+  mailsource retry                  Retry all failed jobs in the queue
+  mailsource retry <jobId>          Retry a specific failed job immediately
 
-${colors.bold}DOMAIN & ANTI-SPAM COMMANDS:${colors.reset}
-  mailsource domains               List all hosted sending/receiving domains
-  mailsource domains add <domain>  Add domain & generate 2048-bit DKIM + DNS records
-  mailsource domains verify <dom>  Test live SPF, DKIM, DMARC, and MX DNS propagation
-  mailsource domains remove <dom>  Remove a domain and delete its DKIM keys
-  mailsource audit <domain>        Run pre-flight deliverability audit (0-100 score)
+${colors.bold}📥 INBOX & INBOUND EMAILS (MongoDB):${colors.reset}
+  mailsource inbox                  List recently received inbound emails
+  mailsource read <id>              Read the full text/HTML body and headers of an email
 
-${colors.bold}SUPPRESSION COMMANDS:${colors.reset}
-  mailsource suppression           List suppressed emails (bounces/unsubscribes)
-  mailsource suppress <email>      Manually suppress an email
-  mailsource unsuppress <email>    Remove an email from suppression
+${colors.bold}🌐 DOMAINS & DNS RECORDS:${colors.reset}
+  mailsource domains                List all hosted sending/receiving domains
+  mailsource domains add <domain>   Add domain & generate ALL DNS records (A, MX, DKIM, SPF, DMARC)
+  mailsource domains dns <domain>   Display full DNS setup records for a domain
+  mailsource dns <domain>           Shortcut to view all DNS records for a domain
+  mailsource domains verify <dom>   Verify live SPF, DKIM, DMARC, and MX DNS propagation
+  mailsource domains remove <dom>   Remove a domain and its DKIM keys
+  mailsource audit <domain>         Pre-flight deliverability audit (0-100 score + Port 25 test)
+
+${colors.bold}🛡️  SUPPRESSION LIST:${colors.reset}
+  mailsource suppression            List suppressed emails (bounces/unsubscribes)
+  mailsource suppress <email>       Manually suppress an email address
+  mailsource unsuppress <email>     Remove an email address from suppression
+
+${colors.bold}📊 SYSTEM & HEALTH:${colors.reset}
+  mailsource status                 Check server health, role, memory, and database status
+  mailsource help                   Show this help menu
 `);
+}
+
+function displayDnsRecords(records, domain) {
+  console.log(`\n${colors.cyan}${colors.bold}📋 Complete DNS Records for ${colors.bold}${domain}${colors.reset}:`);
+  console.log(`${colors.yellow}⚠️  IMPORTANT: In Cloudflare, set proxy status to "DNS Only" (Grey Cloud ⚪). NEVER use Orange Cloud for mail/MX!${colors.reset}\n`);
+
+  for (const r of records) {
+    console.log(`  • ${colors.bold}[${r.type} Record]${colors.reset} ${colors.green}${r.description || ''}${colors.reset}`);
+    console.log(`    ${colors.dim}Name (FQDN)   :${colors.reset} ${colors.cyan}${r.name}${colors.reset}`);
+    if (r.host) console.log(`    ${colors.dim}Name (Short)  :${colors.reset} ${colors.bold}${r.host}${colors.reset} ${colors.dim}(Use this if your DNS asks for hostname)${colors.reset}`);
+    console.log(`    ${colors.dim}Target / Value:${colors.reset} ${colors.yellow}${r.value}${colors.reset}`);
+    if (r.priority) console.log(`    ${colors.dim}Priority      :${colors.reset} ${colors.bold}${r.priority}${colors.reset}`);
+    if (r.proxyStatus) console.log(`    ${colors.dim}Proxy Status  :${colors.reset} ${colors.red}${colors.bold}${r.proxyStatus}${colors.reset}`);
+    console.log('');
+  }
 }
 
 // Locate config file
@@ -298,17 +327,24 @@ async function main() {
         const res = await apiRequest('POST', '/domains', { domain: dom });
         if (res.status === 200 || res.status === 201) {
           console.log(`\n${colors.green}${colors.bold}✔ Domain added successfully!${colors.reset}`);
-          console.log(`\n${colors.bold}📋 Add the following DNS Records to your domain DNS provider:${colors.reset}\n`);
-          const records = res.data.dnsRecords || [];
-          for (const r of records) {
-            console.log(`  • ${colors.bold}${r.type} Record${colors.reset} [${r.description || ''}]`);
-            console.log(`    Host  : ${colors.cyan}${r.name}${colors.reset}`);
-            console.log(`    Value : ${colors.yellow}${r.value}${colors.reset}`);
-            if (r.priority) console.log(`    Priority: ${r.priority}`);
-            console.log('');
-          }
+          displayDnsRecords(res.data.dnsRecords || [], dom);
         } else {
           console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);
+        }
+        return;
+      }
+
+      if (sub === 'dns' || sub === 'records') {
+        const dom = args[2];
+        if (!dom) {
+          console.error(`${colors.red}✖ Error: Please specify a domain. Example: mailsource domains dns example.com${colors.reset}`);
+          process.exit(1);
+        }
+        const res = await apiRequest('GET', `/domains/${dom}`);
+        if (res.status === 200 && res.data) {
+          displayDnsRecords(res.data.dnsRecords || [], dom);
+        } else {
+          console.error(`${colors.red}✖ Error: Domain ${dom} not found or records unavailable.${colors.reset}`);
         }
         return;
       }
@@ -382,14 +418,63 @@ async function main() {
           const verified = d.is_verified ? colors.green + '✔ VERIFIED' : colors.yellow + '⏳ PENDING DNS';
           console.log(`  • ${colors.bold}${d.domain}${colors.reset} [DKIM selector: ${d.selector}] - ${verified}${colors.reset}`);
         }
+        console.log(`\n${colors.dim}To view DNS records for a domain: mailsource dns <domain>${colors.reset}`);
       } else {
         console.error(`${colors.red}✖ Error (${listRes.status}): ${listRes.data?.error || JSON.stringify(listRes.data || listRes.raw)}${colors.reset}`);
       }
       return;
     }
 
-    // 6. QUEUE COMMAND
+    // 6. SHORTCUT DNS COMMAND
+    if (command === 'dns') {
+      const dom = args[1];
+      if (!dom) {
+        console.error(`${colors.red}✖ Error: Please specify a domain. Example: mailsource dns example.com${colors.reset}`);
+        process.exit(1);
+      }
+      const res = await apiRequest('GET', `/domains/${dom}`);
+      if (res.status === 200 && res.data) {
+        displayDnsRecords(res.data.dnsRecords || [], dom);
+      } else {
+        console.error(`${colors.red}✖ Error: Domain ${dom} not found or records unavailable.${colors.reset}`);
+      }
+      return;
+    }
+
+    // 7. QUEUE COMMAND
     if (command === 'queue' || command === 'jobs') {
+      const targetJobId = args[1];
+
+      // Single job details inspection: mailsource queue <jobId>
+      if (targetJobId && !targetJobId.startsWith('-')) {
+        const singleRes = await apiRequest('GET', `/jobs/${targetJobId}`);
+        if (singleRes.status === 200 && singleRes.data) {
+          const j = singleRes.data;
+          console.log(`\n${colors.cyan}${colors.bold}📬 Mail Job Details: ${colors.bold}${j.jobId}${colors.reset}\n`);
+          console.log(`  • Status       : ${j.status.toUpperCase()}`);
+          console.log(`  • Recipient    : ${colors.bold}${j.recipient}${colors.reset}`);
+          console.log(`  • Attempts     : ${j.attempts}/${j.maxRetries}`);
+          console.log(`  • From         : ${j.payload?.from || 'N/A'}`);
+          console.log(`  • Subject      : ${j.payload?.subject || 'N/A'}`);
+          console.log(`  • Created At   : ${j.createdAt ? new Date(j.createdAt).toLocaleString() : 'N/A'}`);
+          if (j.completedAt) console.log(`  • Completed At : ${colors.green}${new Date(j.completedAt).toLocaleString()}${colors.reset}`);
+          if (j.failedAt) console.log(`  • Failed At    : ${colors.red}${new Date(j.failedAt).toLocaleString()}${colors.reset}`);
+          if (j.host) console.log(`  • Destination  : ${colors.yellow}${j.host}${colors.reset}`);
+          if (j.response) console.log(`  • MX Response  : ${colors.green}${j.response}${colors.reset}`);
+          if (j.lastError) console.log(`  • Last Error   : ${colors.red}${j.lastError}${colors.reset}`);
+          if (j.errorHistory && j.errorHistory.length > 0) {
+            console.log(`\n  ${colors.bold}Error History (${j.errorHistory.length}):${colors.reset}`);
+            for (const eh of j.errorHistory) {
+              console.log(`    [Attempt ${eh.attempt}] ${new Date(eh.timestamp).toLocaleTimeString()}: ${colors.red}${eh.error}${colors.reset}`);
+            }
+          }
+          console.log(`\n${colors.dim}To retry this job: mailsource retry ${j.jobId}${colors.reset}\n`);
+        } else {
+          console.error(`\n${colors.red}✖ Job not found: ${targetJobId}${colors.reset}\n`);
+        }
+        return;
+      }
+
       const statsRes = await apiRequest('GET', '/jobs/stats');
       const jobsRes = await apiRequest('GET', '/jobs?limit=15');
 
@@ -421,14 +506,15 @@ async function main() {
 
           console.log(`${j.jobId.slice(0, 18).padEnd(20)} ${recipient} ${statusStr.padEnd(23)} ${attempts} ${details}`);
         }
-        console.log(`\n${colors.dim}To retry failed jobs: mailsource retry [jobId]${colors.reset}\n`);
+        console.log(`\n${colors.dim}To inspect a job: mailsource queue <jobId>${colors.reset}`);
+        console.log(`${colors.dim}To retry failed jobs: mailsource retry [jobId]${colors.reset}\n`);
       } else {
         console.error(`${colors.red}✖ Failed to fetch queue status: ${JSON.stringify(jobsRes.data || statsRes.data)}${colors.reset}`);
       }
       return;
     }
 
-    // 7. RETRY FAILED JOBS
+    // 8. RETRY FAILED JOBS
     if (command === 'retry' || command === 'retry-failed') {
       const jobId = args[1];
       if (jobId) {
@@ -447,6 +533,57 @@ async function main() {
         } else {
           console.error(`\n${colors.red}✖ Error: ${res.data.error || JSON.stringify(res.data)}${colors.reset}\n`);
         }
+      }
+      return;
+    }
+
+    // 9. SUPPRESSION COMMANDS
+    if (command === 'suppression' || command === 'suppress' || command === 'unsuppress') {
+      if (command === 'suppress') {
+        const email = args[1];
+        if (!email) {
+          console.error(`${colors.red}✖ Error: Please specify an email to suppress.${colors.reset}`);
+          process.exit(1);
+        }
+        const res = await apiRequest('POST', '/suppression', { email, reason: 'manual' });
+        if (res.status === 200 || res.status === 201) {
+          console.log(`${colors.green}✔ ${email} added to suppression list.${colors.reset}`);
+        } else {
+          console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);
+        }
+        return;
+      }
+
+      if (command === 'unsuppress') {
+        const email = args[1];
+        if (!email) {
+          console.error(`${colors.red}✖ Error: Please specify an email to unsuppress.${colors.reset}`);
+          process.exit(1);
+        }
+        const res = await apiRequest('DELETE', `/suppression/${encodeURIComponent(email)}`);
+        if (res.status === 200) {
+          console.log(`${colors.green}✔ ${email} removed from suppression list.${colors.reset}`);
+        } else {
+          console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);
+        }
+        return;
+      }
+
+      // List suppression
+      const res = await apiRequest('GET', '/suppression');
+      if (res.status === 200) {
+        const items = res.data.items || [];
+        console.log(`\n${colors.cyan}${colors.bold}🛡️  Suppression List (${res.data.total || items.length}):${colors.reset}\n`);
+        if (items.length === 0) {
+          console.log(`  ${colors.dim}(No suppressed emails)${colors.reset}\n`);
+          return;
+        }
+        for (const it of items) {
+          console.log(`  • ${colors.bold}${it.email}${colors.reset} [Reason: ${it.reason}] ${colors.dim}${new Date(it.created_at).toLocaleString()}${colors.reset}`);
+        }
+        console.log('');
+      } else {
+        console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);
       }
       return;
     }

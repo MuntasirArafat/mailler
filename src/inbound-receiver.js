@@ -17,32 +17,46 @@ class InboundReceiver {
         banner: `${this.serverName} ESMTP Direct Mail Receiver Ready`,
         authOptional: true,
         disabledCommands: ['AUTH'],
-        size: 25 * 1024 * 1024, // 25 MB max email size
+        disableReverseLookup: true, // Prevents DNS reverse lookup delays on incoming connections
+        maxClients: 250,            // Handle high concurrent inbound connections
+        socketTimeout: 30000,       // 30s inactivity timeout
+        size: 25 * 1024 * 1024,     // 25 MB max email size
 
         onConnect: (session, callback) => {
-          callback();
+          return callback();
         },
 
         onMailFrom: (address, session, callback) => {
-          callback();
+          return callback();
         },
 
         onRcptTo: (address, session, callback) => {
-          callback();
+          return callback();
         },
 
         onData: (stream, session, callback) => {
+          stream.on('error', err => {
+            console.error('[InboundReceiver] Inbound stream error:', err.message);
+          });
+
           simpleParser(stream)
             .then(async parsed => {
               const fromVal = (parsed.from && parsed.from.value && parsed.from.value[0]) || {};
               const toVal = (parsed.to && parsed.to.value && parsed.to.value[0]) || {};
 
-              const attachments = (parsed.attachments || []).map(att => ({
-                filename: att.filename || 'attachment',
-                contentType: att.contentType,
-                size: att.size,
-                contentBase64: att.content ? att.content.toString('base64') : null
-              }));
+              const attachments = (parsed.attachments || []).map(att => {
+                let contentBase64 = null;
+                // Safeguard against MongoDB 16MB document size limit (only serialize under 8MB)
+                if (att.content && att.content.length <= 8 * 1024 * 1024) {
+                  contentBase64 = att.content.toString('base64');
+                }
+                return {
+                  filename: att.filename || 'attachment',
+                  contentType: att.contentType,
+                  size: att.size,
+                  contentBase64
+                };
+              });
 
               const headersObj = {};
               if (parsed.headers) {

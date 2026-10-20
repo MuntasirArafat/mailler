@@ -61,42 +61,9 @@ class DomainManager {
     };
     this.saveDomains(domains);
 
-    // 3. Fetch Public IP for SPF guidance
+    // 3. Fetch Public IP for SPF and A-record guidance
     const publicIp = await DeliverabilityAuditor.getPublicIp();
-
-    const dnsRecords = [
-      {
-        type: 'TXT',
-        name: dkim.recordName,
-        value: dkim.txtValue,
-        description: 'DKIM cryptographic public signature verification'
-      },
-      {
-        type: 'TXT',
-        name: cleanDomain,
-        value: `v=spf1 ip4:${publicIp || 'YOUR_SERVER_IP'} ~all`,
-        description: 'SPF authorizer for your server IP'
-      },
-      {
-        type: 'TXT',
-        name: `mail.${cleanDomain}`,
-        value: 'v=spf1 a -all',
-        description: 'SPF authorizer for MTA HELO hostname (fixes SPF_HELO_NONE)'
-      },
-      {
-        type: 'TXT',
-        name: `_dmarc.${cleanDomain}`,
-        value: `v=DMARC1; p=reject; sp=reject; pct=100; rua=mailto:postmaster@${cleanDomain}`,
-        description: 'DMARC policy declaration (rejects spoofed emails)'
-      },
-      {
-        type: 'MX',
-        name: cleanDomain,
-        priority: 10,
-        value: `mail.${cleanDomain}`,
-        description: 'Inbound Mail Exchanger routing'
-      }
-    ];
+    const dnsRecords = DomainManager.buildDnsRecords(cleanDomain, selector, dkim, publicIp);
 
     return {
       domain: cleanDomain,
@@ -108,31 +75,96 @@ class DomainManager {
     };
   }
 
+  /**
+   * Helper to construct all essential DNS records for a domain (A, MX, DKIM, SPF, HELO SPF, DMARC)
+   */
+  static buildDnsRecords(cleanDomain, selector, dkim, publicIp) {
+    const ip = publicIp || 'YOUR_SERVER_IP';
+    const dkimValue = dkim ? (dkim.txtValue || dkim.txt_record_value || '') : '';
+    const dkimName = dkim ? (dkim.recordName || dkim.txt_record_name || `${selector}._domainkey.${cleanDomain}`) : `${selector}._domainkey.${cleanDomain}`;
+
+    return [
+      {
+        type: 'A',
+        name: `mail.${cleanDomain}`,
+        host: 'mail',
+        value: ip,
+        proxyStatus: 'DNS Only (Grey Cloud - DO NOT PROXY)',
+        description: 'Mail server host IP for inbound SMTP (port 25) and outbound HELO'
+      },
+      {
+        type: 'MX',
+        name: cleanDomain,
+        host: '@',
+        priority: 10,
+        value: `mail.${cleanDomain}`,
+        proxyStatus: 'DNS Only',
+        description: 'Routes inbound emails to your mail server'
+      },
+      {
+        type: 'TXT',
+        name: dkimName,
+        host: `${selector}._domainkey`,
+        value: dkimValue,
+        proxyStatus: 'DNS Only',
+        description: 'DKIM 2048-bit cryptographic signature (100% Google/Yahoo authenticity)'
+      },
+      {
+        type: 'TXT',
+        name: cleanDomain,
+        host: '@',
+        value: `v=spf1 ip4:${ip} ~all`,
+        proxyStatus: 'DNS Only',
+        description: 'SPF authorizer allowing your server IP to send emails for this domain'
+      },
+      {
+        type: 'TXT',
+        name: `mail.${cleanDomain}`,
+        host: 'mail',
+        value: `v=spf1 ip4:${ip} ~all`,
+        proxyStatus: 'DNS Only',
+        description: 'HELO SPF authorizer (prevents mail-tester SPF_HELO_FAIL and RDNS_NONE)'
+      },
+      {
+        type: 'TXT',
+        name: `_dmarc.${cleanDomain}`,
+        host: '_dmarc',
+        value: `v=DMARC1; p=reject; sp=reject; pct=100; rua=mailto:postmaster@${cleanDomain}`,
+        proxyStatus: 'DNS Only',
+        description: 'DMARC anti-spoofing policy (protects domain reputation)'
+      }
+    ];
+  }
+
   static listDomains() {
     const domains = this.loadDomains();
     return Object.values(domains).sort((a, b) => b.created_at - a.created_at);
   }
 
-  static getDomain(domain) {
+  static async getDomain(domain) {
     const cleanDomain = domain.toLowerCase().trim();
     const domains = this.loadDomains();
     const item = domains[cleanDomain];
     if (!item) return null;
 
     const dkim = SpamShield.getDkim(cleanDomain);
+    const publicIp = await DeliverabilityAuditor.getPublicIp().catch(() => null);
+    const dnsRecords = DomainManager.buildDnsRecords(cleanDomain, item.selector, dkim, publicIp);
+
     return {
       ...item,
       dkim: dkim ? {
         selector: dkim.selector,
         recordName: dkim.recordName || dkim.txt_record_name,
         txtValue: dkim.txtValue || dkim.txt_record_value
-      } : null
+      } : null,
+      dnsRecords
     };
   }
 
   static async verifyDomain(domain) {
     const cleanDomain = domain.toLowerCase().trim();
-    const item = this.getDomain(cleanDomain);
+    const item = await this.getDomain(cleanDomain);
     if (!item) throw new Error(`Domain "${cleanDomain}" is not added to this mail server.`);
 
     const audit = await DeliverabilityAuditor.auditDomain(cleanDomain, item.selector);

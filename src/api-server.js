@@ -7,6 +7,7 @@ const DnsChecker = require('./dns-checker');
 const dkimManager = require('./dkim-manager');
 const DomainManager = require('./domain-manager');
 const InboundReceiver = require('./inbound-receiver');
+const SuppressionManager = require('./suppression');
 const db = require('./db');
 
 function createApiServer(mta, jobQueue, inboundReceiver, options = {}) {
@@ -429,10 +430,14 @@ function createApiServer(mta, jobQueue, inboundReceiver, options = {}) {
     }
   });
 
-  app.get('/api/domains/:domain', (req, res) => {
-    const domain = DomainManager.getDomain(req.params.domain);
-    if (!domain) return res.status(404).json({ error: 'Domain not found' });
-    res.json(domain);
+  app.get('/api/domains/:domain', async (req, res) => {
+    try {
+      const domain = await DomainManager.getDomain(req.params.domain);
+      if (!domain) return res.status(404).json({ error: 'Domain not found' });
+      res.json(domain);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.post('/api/domains/:domain/verify', async (req, res) => {
@@ -485,6 +490,39 @@ function createApiServer(mta, jobQueue, inboundReceiver, options = {}) {
     try {
       const count = await InboundReceiver.clearInbox();
       res.json({ success: true, deletedCount: count });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 9. SUPPRESSION LIST
+  app.get('/api/suppression', (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+      const offset = parseInt(req.query.offset || '0', 10);
+      const items = SuppressionManager.list({ limit, offset, reason: req.query.reason });
+      const total = SuppressionManager.count();
+      res.json({ total, limit, offset, items });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/suppression', (req, res) => {
+    try {
+      const { email, reason, details } = req.body;
+      if (!email) return res.status(400).json({ error: 'Missing email' });
+      const item = SuppressionManager.add(email, reason, details);
+      res.status(201).json(item);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/suppression/:email', (req, res) => {
+    try {
+      const success = SuppressionManager.remove(req.params.email);
+      res.json({ success });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
