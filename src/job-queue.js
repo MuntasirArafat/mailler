@@ -405,7 +405,7 @@ class JobQueue {
   async retryJob(jobId) {
     const col = jobsCollection();
     const result = await col.updateOne(
-      { jobId, status: { $in: ['failed', 'completed'] } },
+      { jobId },
       {
         $set: {
           status: 'queued',

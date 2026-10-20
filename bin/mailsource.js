@@ -184,19 +184,27 @@ async function main() {
       const payload = { from: formattedFrom, name, to, subject, text: body, html: html || `<p>${body}</p>` };
       const res = await apiRequest('POST', '/send', payload);
 
-      if (res.status === 200) {
-        console.log(`\n${colors.green}${colors.bold}✔ SUCCESS! Email delivered directly to destination MX.${colors.reset}`);
-        if (res.data.messageId) {
-          console.log(`  • Message ID   : ${colors.cyan}${res.data.messageId}${colors.reset}`);
-        }
-        if (res.data.host) {
-          console.log(`  • Destination  : ${colors.yellow}${res.data.host}${colors.reset}`);
-        }
-        if (res.data.response) {
-          console.log(`  • MX Response  : ${colors.green}${res.data.response}${colors.reset}`);
-        }
-        if (res.data.durationMs) {
-          console.log(`  • Delivery Time: ${colors.dim}${res.data.durationMs}ms${colors.reset}`);
+      if (res.status === 200 || res.status === 202) {
+        if (res.data.mode === 'queued') {
+          console.log(`\n${colors.green}${colors.bold}✔ SUCCESS! Email enqueued into MongoDB Job Queue.${colors.reset}`);
+          console.log(`  • Job ID       : ${colors.cyan}${res.data.jobId}${colors.reset}`);
+          console.log(`  • Status       : ${colors.yellow}${res.data.status.toUpperCase()}${colors.reset}`);
+          console.log(`  • Recipient    : ${colors.bold}${res.data.recipient}${colors.reset}`);
+          console.log(`\n${colors.dim}Track worker delivery with: mailsource queue${colors.reset}`);
+        } else {
+          console.log(`\n${colors.green}${colors.bold}✔ SUCCESS! Email delivered directly to destination MX.${colors.reset}`);
+          if (res.data.messageId) {
+            console.log(`  • Message ID   : ${colors.cyan}${res.data.messageId}${colors.reset}`);
+          }
+          if (res.data.host) {
+            console.log(`  • Destination  : ${colors.yellow}${res.data.host}${colors.reset}`);
+          }
+          if (res.data.response) {
+            console.log(`  • MX Response  : ${colors.green}${res.data.response}${colors.reset}`);
+          }
+          if (res.data.durationMs) {
+            console.log(`  • Delivery Time: ${colors.dim}${res.data.durationMs}ms${colors.reset}`);
+          }
         }
       } else {
         console.error(`\n${colors.red}✖ Failed (${res.status}): ${res.data.error || JSON.stringify(res.data)}${colors.reset}`);
