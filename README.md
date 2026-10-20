@@ -1,143 +1,115 @@
-# Stateless Direct Node.js MTA Sender Node (Multi-VPS Architecture)
+# Production Direct Node.js MTA Mail Server & MongoDB Job Queue System
 
-A production-grade, lightweight, stateless **Direct MTA Mail Sender Node** in Node.js built to run across **multiple VPS instances** and be orchestrated from a **centralized control system**.
+A high-performance, production-ready **Direct MTA Mail Server** in Node.js backed by **MongoDB**. Features an enterprise outbound **Job Queue** with atomic worker checkout, automatic retry backoff, hard-bounce classification, and persistent **Inbound Message Storage** on Port 25.
 
-**Zero local database (No SQLite)**, zero local job queue bottlenecks, and zero third-party SMTP relays (No SendGrid, Mailgun, or AWS SES). Pure direct MTA transmission to destination mail exchangers (MX) on Port 25 with opportunistic STARTTLS.
+**Pure Direct Port 25 Transmission**: Direct socket delivery to destination mail exchangers (Google, Microsoft, Yahoo, etc.) with opportunistic STARTTLS, DKIM signing, and zero third-party SMTP relay dependencies.
 
 ---
 
 ## ⚡ Key Highlights
 
-- **Stateless Sending Nodes**: Designed to run on multiple VPS worker nodes controlled centrally. No local database, no SQLite locks, zero persistence bottlenecks.
-- **Direct Port 25 Delivery**: Direct socket delivery to destination MX (Google, Microsoft, Yahoo, etc.) with opportunistic STARTTLS.
-- **Inbound Mail Receiver with Instant Webhook**: Listens on Port 25 for incoming emails, parses MIME, extracts attachments, and automatically dispatches a real-time HTTP POST JSON webhook callback to your central system.
-- **Direct Single & Batch Send API**:
-  - `POST /api/send`: Live direct send returning delivery status, MX banner, and messageId immediately (supports plain text, HTML, or both).
-  - `POST /api/send-batch`: Parallel direct send across multiple recipients with concurrency throttling.
-- **Dynamic DKIM from Central Controller**: Pass DKIM private keys directly in send requests or store in `config/dkim-keys.json`.
+- **MongoDB Job Queue System**:
+  - Atomic job checkout via MongoDB `findOneAndUpdate` (safe across multiple concurrent workers).
+  - Complete status lifecycle: `queued` ➔ `processing` ➔ `completed` or `failed`.
+  - Exponential backoff retry system: 1m, 5m, 15m, 30m, 1h for temporary delivery errors (4xx greylisting, DNS/connection timeouts).
+  - Instant classification of permanent 5xx hard bounces ("User unknown", "Mailbox not found") to prevent reputation damage.
+- **Persistent Inbound Message Store**:
+  - Receives emails on Port 25, parses MIME with `mailparser`, extracts attachments and headers, and persists directly into MongoDB.
+  - Query, filter, and search inbox via REST API and terminal CLI.
+- **Direct & Queued Send API**:
+  - `POST /api/send`: Queued by default (`status: 'queued'`), or immediate synchronous MX delivery when `?sync=true`.
+  - `POST /api/jobs`: Bulk batch and single email queuing.
+  - `GET /api/jobs`: Live job inspection, filtering by status and recipient.
+  - `POST /api/jobs/:id/retry` & `POST /api/jobs/retry-all`: Re-trigger failed jobs.
 - **Anti-Spam & Deliverability Shield**:
   - Automatic 2048-bit RSA DKIM signing.
-  - Strict RFC 5321 Return-Path SPF alignment + HELO SPF support.
+  - Strict RFC 5321 Return-Path SPF alignment + HELO SPF support (`mail.<domain>`).
   - RFC 8058 One-Click List-Unsubscribe headers (`List-Unsubscribe` & `List-Unsubscribe-Post`).
   - Pre-flight DNS deliverability auditor (SPF, DKIM, DMARC, Port 25 reachability).
-- **Password Authentication**: Every API request is strictly secured by password authentication.
+- **Password Authentication**: Secured via `x-api-key: ar@51/er` or `Authorization: Bearer ar@51/er`.
 
 ---
 
-## 🚀 VPS One-Command Automated Setup
+## 🚀 1-Click Docker Setup (Mail Server + MongoDB)
 
-The installer scripts ([`deploy.sh`](file:///Users/muntasirarafat/Documents/mailserver/deploy.sh) and [`docker-deploy.sh`](file:///Users/muntasirarafat/Documents/mailserver/docker-deploy.sh)) interactively configure:
-1. **API Port** (Default: `3000`)
-2. **API Password** (Secret authentication key)
-3. **Inbound Mail Webhook Callback URL** (When any incoming email is received, it is immediately POSTed as JSON to this URL)
+The included `docker-compose.yml` automatically spins up both the **MongoDB 7** container and the **Mail Server** together with data persistence.
 
-### Option A: Standard VPS Installation (Systemd Service)
-```bash
-sudo bash deploy.sh
-```
-
-### Option B: Docker Container Installation (Recommended)
-
-You can configure your settings directly in `.env` (copy from `.env.example`):
+### Step 1: Clone & Configure `.env`
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-Your `.env` file looks like this:
+Your `.env` file:
 ```env
 PORT=3000
 API_PASSWORD=ar@51/er
-WEBHOOK_URL=https://central.example.com/api/inbound
+MONGODB_URI=mongodb://127.0.0.1:27017/mailserver
 HELO_HOST=mail.exauraa.com
 INBOUND_PORT=25
+CONCURRENCY=25
 ```
 
-Then run the installer:
+### Step 2: Deploy Container
 ```bash
 sudo bash docker-deploy.sh
 ```
-*(If `.env` is present, `docker-deploy.sh` automatically uses it without asking any interactive questions!)*
+*(Or simply run `docker compose up -d --build`)*
 
-Or start directly with Docker Compose:
-```bash
-docker compose up -d --build
-```
-
-### Interactive Setup Prompt Example:
-```text
-⚙️  Configure Your Mail Server Credentials:
-Select API Service Port [default: 3000]: 3000
-Enter Secret API Password [press Enter to auto-generate]: ar@51/er
-Enter Inbound Mail Webhook Callback URL (e.g. https://central.example.com/api/inbound) [press Enter to skip]: https://central.example.com/api/inbound
-
-✔ Configuration chosen:
-  • API Port        : 3000
-  • API Password    : ar@51/er
-  • Inbound Webhook : https://central.example.com/api/inbound
-```
-
-*(Non-interactive flags are supported: `sudo bash deploy.sh -p 3000 -k ar@51/er -w https://central.example.com/api/inbound`)*
-
-### Managing the Background Service:
-```bash
-# Check service status
-sudo systemctl status mailserver
-
-# View live delivery and inbound logs
-sudo journalctl -u mailserver -f
-
-# Restart service
-sudo systemctl restart mailserver
-
-# Stop service
-sudo systemctl stop mailserver
-```
+The installer launches MongoDB and Mail Server in the background, sets up host networking on Port 25 & 3000, and enables the global host `mailsource` CLI.
 
 ---
 
-## ⚡ Global CLI Tool (`mailsource` / `mailsouce`)
+## ⚡ Global CLI Tool (`mailsource`)
 
-After installing on your VPS, you can manage the mail server directly from any terminal using `mailsource` (or `mailsouce`):
+Manage your mail server, inspect jobs, and read incoming emails directly from your server terminal:
 
-### 1. Send Email via CLI:
+### 1. View Outbound Queue & Job Retries:
 ```bash
-mailsource send --to client@gmail.com --from me@yourdomain.com --subject "Direct Test" --body "Hello from terminal!"
+mailsource queue
+```
+Displays live summary:
+```text
+📬 Outbound Mail Job Queue (MongoDB):
+  • Status Summary : Queued: 2 | Processing: 1 | Completed: 48 | Failed: 0
+  • Concurrency    : 25 worker slots (1 currently active)
+
+JOB ID               RECIPIENT                  STATUS         ATTEMPTS   DETAILS
+-----------------------------------------------------------------------------------------------
+job_a8f9c102b3       client@gmail.com           COMPLETED      1/5        gmail-smtp-in.l.google.com
+job_e718bc3d4a       user@yahoo.com             QUEUED         2/5        Retrying in 240s
 ```
 
-### 2. View Server Status & Queue:
+### 2. Retry Failed Jobs:
 ```bash
-mailsource status
+# Retry a specific job
+mailsource retry job_e718bc3d4a
+
+# Retry all failed jobs
+mailsource retry
 ```
 
-### 3. Read Inbound Received Emails:
+### 3. Read Inbound Received Emails (from MongoDB):
 ```bash
-# List all received emails
+# List recent emails
 mailsource inbox
 
-# Read email by ID
-mailsource read 1
+# Read full email body and attachments by ID
+mailsource read 1774182900000
 ```
 
-### 4. Manage Hosted Domains & DNS:
+### 4. Send Email via CLI:
 ```bash
-# List domains
-mailsource domains
+# Send via background Job Queue (Recommended)
+mailsource send --to client@gmail.com --from noreply@exauraa.com --subject "Hello" --body "Welcome!"
 
-# Add new domain (generates 2048-bit DKIM & DNS instructions)
-mailsource domains add mybrand.com
-
-# Verify live DNS records
-mailsource domains verify mybrand.com
+# Or send synchronously (waits for live MX socket connection)
+mailsource send --to client@gmail.com --from noreply@exauraa.com --subject "Hello" --body "Welcome!" --sync
 ```
 
-### 5. Inspect Queue & Retry Failed Jobs:
+### 5. Check Overall Server & MongoDB Health:
 ```bash
-# View recent jobs
-mailsource queue
-
-# Retry failed deliveries
-mailsource retry
+mailsource status
 ```
 
 ---
@@ -327,101 +299,156 @@ Allows your centralized system to dispatch an array of emails to this VPS node f
 
 ---
 
-### 5. Inbound Mail Receiving & Webhook Callback (Receive Incoming Emails)
+---
 
-The mail server runs an Inbound SMTP service on **Port 25** (or configured port). When an email arrives:
-1. It is parsed by `mailparser` (extracts headers, sender, recipient, subject, plain text body, HTML body, and base64 attachments).
-2. It is saved in persistent memory/file (`data/inbox.json`).
-3. **Webhook Callback Dispatch**: If a Webhook Callback URL is configured, the server immediately performs an HTTP `POST` request with `Content-Type: application/json` containing the complete parsed message.
+### 3. Outbound Job Queue API (MongoDB Backed)
 
-#### 🔔 Webhook Callback Payload Specification
-When an incoming email is delivered to your server, your callback URL receives this JSON payload:
+#### `POST /api/jobs`
+Enqueues one or more emails into MongoDB for asynchronous worker delivery.
 
+**Single Email:**
+```bash
+curl -X POST http://localhost:3000/api/jobs \
+  -H "x-api-key: ar@51/er" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from": "noreply@exauraa.com",
+    "name": "Support",
+    "to": "client@gmail.com",
+    "subject": "Queued Delivery",
+    "text": "Hello! Your report is ready."
+  }'
+```
+**Response (`201 Created`):**
 ```json
 {
-  "id": 1774182900000,
-  "message_id": "<CABe4d8f...example@gmail.com>",
-  "from_email": "sender@gmail.com",
-  "from_name": "John Doe",
-  "to_email": "contact@yourdomain.com",
-  "subject": "Inquiry regarding your services",
-  "text_body": "Hi there,\nI would like more information about your platform.\nThanks,\nJohn",
-  "html_body": "<p>Hi there,<br>I would like more information about your platform.<br>Thanks,<br>John</p>",
-  "headers": {
-    "date": "Tue, 20 Oct 2026 12:30:00 +0000",
-    "from": "John Doe <sender@gmail.com>",
-    "to": "contact@yourdomain.com",
-    "subject": "Inquiry regarding your services"
-  },
-  "attachments": [
-    {
-      "filename": "proposal.pdf",
-      "contentType": "application/pdf",
-      "size": 48200,
-      "contentBase64": "JVBERi0xLjQK..."
-    }
-  ],
-  "raw_size": 52140,
-  "received_at": 1774182900000
+  "success": true,
+  "jobId": "job_9b3e1c07af82d1",
+  "status": "queued",
+  "recipient": "client@gmail.com"
 }
 ```
 
-#### `GET /api/webhook`
-Check the currently active Webhook Callback URL.
+**Bulk Email Batch:**
 ```bash
-curl -H "x-api-key: ar@51/er" http://localhost:3000/api/webhook
+curl -X POST http://localhost:3000/api/jobs \
+  -H "x-api-key: ar@51/er" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "emails": [
+      { "from": "noreply@exauraa.com", "to": "user1@gmail.com", "subject": "Welcome User 1", "text": "Hi 1" },
+      { "from": "noreply@exauraa.com", "to": "user2@yahoo.com", "subject": "Welcome User 2", "text": "Hi 2" }
+    ]
+  }'
+```
+
+#### `GET /api/jobs/stats`
+Returns live real-time job counts by status.
+```bash
+curl -H "x-api-key: ar@51/er" http://localhost:3000/api/jobs/stats
+```
+**Response (`200 OK`):**
+```json
+{
+  "queued": 5,
+  "processing": 2,
+  "completed": 1250,
+  "failed": 3,
+  "total": 1260,
+  "activeWorkers": 2,
+  "concurrency": 25
+}
+```
+
+#### `GET /api/jobs`
+List jobs with pagination and status filters.
+- Parameters: `status` (`queued`, `processing`, `completed`, `failed`), `recipient`, `search`, `limit`, `offset`
+```bash
+curl -H "x-api-key: ar@51/er" "http://localhost:3000/api/jobs?status=failed&limit=10"
+```
+
+#### `GET /api/jobs/:id`
+Inspect full job details, attempts history, delivery duration, and last error.
+```bash
+curl -H "x-api-key: ar@51/er" http://localhost:3000/api/jobs/job_9b3e1c07af82d1
+```
+
+#### `POST /api/jobs/:id/retry`
+Re-queues a specific failed job for immediate re-attempt.
+```bash
+curl -X POST -H "x-api-key: ar@51/er" http://localhost:3000/api/jobs/job_9b3e1c07af82d1/retry
+```
+
+#### `POST /api/jobs/retry-all`
+Re-queues all failed jobs in MongoDB.
+```bash
+curl -X POST -H "x-api-key: ar@51/er" http://localhost:3000/api/jobs/retry-all
+```
+
+#### `DELETE /api/jobs/:id`
+Cancel or delete a job.
+```bash
+curl -X DELETE -H "x-api-key: ar@51/er" http://localhost:3000/api/jobs/job_9b3e1c07af82d1
+```
+
+---
+
+### 4. Inbound Mail Storage (MongoDB Backed)
+
+The mail server runs an Inbound SMTP service on **Port 25**. When an email arrives:
+1. It is parsed by `mailparser` (headers, sender, recipient, subject, plain text body, HTML body, attachments).
+2. It is saved directly into the MongoDB `inbound_messages` collection.
+
+#### `GET /api/inbox`
+Query stored incoming messages with pagination and search filters.
+- Parameters: `limit`, `offset`, `to`, `from`, `query`
+```bash
+curl -H "x-api-key: ar@51/er" "http://localhost:3000/api/inbox?limit=20"
 ```
 **Response:**
 ```json
 {
-  "webhookUrl": "https://central.example.com/api/inbound"
+  "total": 1,
+  "limit": 20,
+  "offset": 0,
+  "emails": [
+    {
+      "id": 1774182900000,
+      "message_id": "<CABe4d8f...example@gmail.com>",
+      "from_email": "client@gmail.com",
+      "from_name": "John Doe",
+      "to_email": "support@exauraa.com",
+      "subject": "Help with account",
+      "text_body": "Hello, I have a question about my account.",
+      "html_body": "<p>Hello, I have a question about my account.</p>",
+      "status": "received",
+      "received_at": "2026-10-20T12:30:00.000Z"
+    }
+  ]
 }
 ```
 
-#### `POST /api/webhook`
-Dynamically set or change the Inbound Webhook Callback URL without restarting the service.
-```bash
-curl -X POST http://localhost:3000/api/webhook \
-  -H "x-api-key: ar@51/er" \
-  -H "Content-Type: application/json" \
-  -d '{"webhookUrl": "https://central.example.com/api/inbound"}'
-```
-
-#### `GET /api/inbox`
-List received emails stored on the node.
-- Query Parameters:
-  - `limit` (default: 50, max: 200)
-  - `offset` (default: 0)
-  - `to` (filter by recipient address, e.g. `support@yourdomain.com`)
-  - `from` (filter by sender address)
-  - `query` (search subject and text content)
-
-```bash
-curl -H "x-api-key: ar@51/er" "http://localhost:3000/api/inbox?limit=10"
-```
-
 #### `GET /api/inbox/:id`
-Retrieve a single email by timestamp ID with full body and attachments.
+Retrieve full incoming email including base64 attachments and headers.
 ```bash
 curl -H "x-api-key: ar@51/er" http://localhost:3000/api/inbox/1774182900000
 ```
 
 #### `DELETE /api/inbox/:id`
-Delete a specific email from the local inbox.
+Delete an incoming email from MongoDB.
 ```bash
 curl -X DELETE -H "x-api-key: ar@51/er" http://localhost:3000/api/inbox/1774182900000
 ```
 
-#### `POST /api/inbox/clear`
-Clear all local stored emails.
+#### `DELETE /api/inbox`
+Clear all incoming messages from MongoDB.
 ```bash
-curl -X POST -H "x-api-key: ar@51/er" http://localhost:3000/api/inbox/clear
+curl -X DELETE -H "x-api-key: ar@51/er" http://localhost:3000/api/inbox
 ```
-
 
 ---
 
-### 6. Domain Management (Multi-Domain Hosting)
+### 5. Domain Management (Multi-Domain Hosting)
 
 #### `POST /api/domains`
 Adds a sending/receiving domain, auto-generates a dedicated 2048-bit RSA DKIM key, and provides exact DNS records to configure.

@@ -1,18 +1,22 @@
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const SpamShield = require('./spam-shield');
 const DeliverabilityAuditor = require('./deliverability-auditor');
 const DnsChecker = require('./dns-checker');
 const dkimManager = require('./dkim-manager');
+const DomainManager = require('./domain-manager');
+const InboundReceiver = require('./inbound-receiver');
+const db = require('./db');
 
-function createApiServer(mta, inboundReceiverOrOptions = null, options = {}) {
-  let inboundReceiver = null;
+function createApiServer(mta, jobQueue, inboundReceiver, options = {}) {
+  // Support flexible argument patterns
   let opts = options;
-  if (inboundReceiverOrOptions && typeof inboundReceiverOrOptions.start === 'function') {
-    inboundReceiver = inboundReceiverOrOptions;
-  } else if (inboundReceiverOrOptions && typeof inboundReceiverOrOptions === 'object') {
-    opts = inboundReceiverOrOptions;
+  if (!inboundReceiver && jobQueue && !jobQueue.enqueue) {
+    opts = jobQueue;
+    jobQueue = null;
   }
+
   const app = express();
   const apiPassword = opts.apiPassword || process.env.API_PASSWORD || process.env.API_KEY || null;
 
@@ -50,18 +54,27 @@ function createApiServer(mta, inboundReceiverOrOptions = null, options = {}) {
   });
 
   // Health & System Info
-  app.get('/api/health', (req, res) => {
+  app.get('/api/health', async (req, res) => {
+    let queueStats = null;
+    if (jobQueue) {
+      try {
+        queueStats = await jobQueue.getStats();
+      } catch (e) {}
+    }
+
     res.json({
       status: 'healthy',
-      role: 'stateless-mta-worker',
+      database: db.isConnected() ? 'connected' : 'disconnected',
+      role: 'production-mta-worker',
       uptime: process.uptime(),
       memory: process.memoryUsage(),
       heloHost: mta.heloHost || null,
-      authRequired: !!apiPassword
+      authRequired: !!apiPassword,
+      queue: queueStats
     });
   });
 
-  // 1. OUTBOUND: DIRECT SINGLE EMAIL SEND
+  // 1. OUTBOUND: SINGLE EMAIL SEND (Queued by default, or immediate with ?sync=true)
   app.post('/api/send', async (req, res) => {
     try {
       const {
@@ -76,140 +89,253 @@ function createApiServer(mta, inboundReceiverOrOptions = null, options = {}) {
         unsubscribeUrl,
         unsubscribeEmail,
         headers,
-        dkim
+        dkim,
+        sync
       } = req.body;
 
       if (!from || !to) {
         return res.status(400).json({ error: 'Both "from" and "to" email addresses are required.' });
       }
 
-      const senderName = fromName || name || null;
-      let formattedFrom = from.trim();
-      if (senderName && !formattedFrom.includes('<')) {
-        formattedFrom = `"${senderName}" <${formattedFrom}>`;
+      // Check if synchronous send requested
+      const isSync = req.query.sync === 'true' || sync === true || !jobQueue;
+
+      if (isSync) {
+        const senderName = fromName || name || null;
+        let formattedFrom = from.trim();
+        if (senderName && !formattedFrom.includes('<')) {
+          formattedFrom = `"${senderName}" <${formattedFrom}>`;
+        }
+
+        const startTime = Date.now();
+        const prepared = await SpamShield.prepareAntiSpamMessage({
+          from: formattedFrom,
+          fromName: senderName,
+          to,
+          subject,
+          text,
+          html,
+          attachments,
+          unsubscribeUrl,
+          unsubscribeEmail,
+          headers,
+          dkim
+        });
+
+        const delivery = await mta.deliver(formattedFrom, to, prepared.buffer);
+        const durationMs = Date.now() - startTime;
+
+        return res.json({
+          success: true,
+          mode: 'synchronous',
+          messageId: prepared.messageId,
+          dkimSigned: prepared.dkimSigned,
+          recipient: to,
+          durationMs,
+          response: delivery.response,
+          host: delivery.host,
+          tls: delivery.tls
+        });
       }
 
-      const startTime = Date.now();
-      const prepared = await SpamShield.prepareAntiSpamMessage({
-        from: formattedFrom,
-        fromName: senderName,
-        to,
-        subject,
-        text,
-        html,
-        attachments,
-        unsubscribeUrl,
-        unsubscribeEmail,
-        headers,
-        dkim
-      });
-
-      const delivery = await mta.deliver(formattedFrom, to, prepared.buffer);
-      const durationMs = Date.now() - startTime;
-
-      return res.json({
+      // Default: Enqueue into MongoDB Job Queue
+      const queueResult = await jobQueue.enqueue(req.body);
+      return res.status(202).json({
         success: true,
-        messageId: prepared.messageId,
-        dkimSigned: prepared.dkimSigned,
-        recipient: to,
-        durationMs,
-        response: delivery.response,
-        host: delivery.host,
-        tls: delivery.tls
+        mode: 'queued',
+        jobId: queueResult.jobId,
+        status: queueResult.status,
+        recipient: to
       });
     } catch (err) {
-      return res.status(502).json({
+      console.error('[API Send Error]:', err.message);
+      return res.status(500).json({
         success: false,
-        error: err.message,
-        recipient: req.body.to || null
+        error: err.message || 'Delivery error'
       });
     }
   });
 
-  // 2. OUTBOUND: DIRECT CONCURRENT BATCH SEND (Stateless parallel delivery)
-  app.post(['/api/send-batch', '/api/send/batch'], async (req, res) => {
+  // 2. OUTBOUND: BATCH EMAIL SEND
+  app.post('/api/send-batch', async (req, res) => {
     try {
-      const emails = req.body.emails;
+      const { emails, sync } = req.body;
       if (!Array.isArray(emails) || emails.length === 0) {
-        return res.status(400).json({ error: '"emails" must be a non-empty array of email objects.' });
+        return res.status(400).json({ error: 'Body must contain non-empty "emails" array.' });
       }
 
-      const concurrency = Math.min(Math.max(parseInt(req.body.concurrency || '10', 10), 1), 50);
-      const results = new Array(emails.length);
-      let nextIndex = 0;
+      const isSync = req.query.sync === 'true' || sync === true || !jobQueue;
 
-      async function worker() {
-        while (nextIndex < emails.length) {
-          const currentIndex = nextIndex++;
-          const email = emails[currentIndex];
-          try {
-            if (!email.from || !email.to) {
-              results[currentIndex] = { to: email.to || null, success: false, error: 'Missing "from" or "to"' };
-              continue;
-            }
+      if (isSync) {
+        const concurrency = Math.min(parseInt(req.body.concurrency || '10', 10), 50);
+        const results = [];
+        let sent = 0;
+        let failed = 0;
 
-            const senderName = email.fromName || email.name || null;
-            let formattedFrom = email.from.trim();
-            if (senderName && !formattedFrom.includes('<')) {
-              formattedFrom = `"${senderName}" <${formattedFrom}>`;
-            }
-
-            const prepared = await SpamShield.prepareAntiSpamMessage({
-              from: formattedFrom,
-              fromName: senderName,
-              to: email.to,
-              subject: email.subject,
-              text: email.text,
-              html: email.html,
-              attachments: email.attachments,
-              unsubscribeUrl: email.unsubscribeUrl,
-              unsubscribeEmail: email.unsubscribeEmail,
-              headers: email.headers,
-              dkim: email.dkim
-            });
-
-            const delivery = await mta.deliver(formattedFrom, email.to, prepared.buffer);
-            results[currentIndex] = {
-              to: email.to,
-              success: true,
-              messageId: prepared.messageId,
-              dkimSigned: prepared.dkimSigned,
-              host: delivery.host,
-              response: delivery.response
-            };
-          } catch (err) {
-            results[currentIndex] = {
-              to: email.to || null,
-              success: false,
-              error: err.message
-            };
-          }
+        for (let i = 0; i < emails.length; i += concurrency) {
+          const chunk = emails.slice(i, i + concurrency);
+          const chunkResults = await Promise.all(
+            chunk.map(async email => {
+              try {
+                const prepared = await SpamShield.prepareAntiSpamMessage(email);
+                const delivery = await mta.deliver(email.from, email.to, prepared.buffer);
+                sent++;
+                return {
+                  to: email.to,
+                  success: true,
+                  messageId: prepared.messageId,
+                  dkimSigned: prepared.dkimSigned,
+                  host: delivery.host,
+                  response: delivery.response
+                };
+              } catch (err) {
+                failed++;
+                return {
+                  to: email.to,
+                  success: false,
+                  error: err.message
+                };
+              }
+            })
+          );
+          results.push(...chunkResults);
         }
+
+        return res.json({
+          success: true,
+          mode: 'synchronous',
+          total: emails.length,
+          sent,
+          failed,
+          results
+        });
       }
 
-      const workers = [];
-      const workerCount = Math.min(concurrency, emails.length);
-      for (let i = 0; i < workerCount; i++) {
-        workers.push(worker());
-      }
-      await Promise.all(workers);
-
-      const sent = results.filter(r => r.success).length;
-      const failed = results.length - sent;
-
-      return res.json({
+      // Default: Bulk enqueue into MongoDB Job Queue
+      const batchResult = await jobQueue.enqueueBatch(emails, req.body);
+      return res.status(202).json({
         success: true,
-        total: emails.length,
-        sent,
-        failed,
-        results
+        mode: 'queued',
+        total: batchResult.queued,
+        jobIds: batchResult.jobIds
       });
     } catch (err) {
       return res.status(500).json({ success: false, error: err.message });
     }
   });
 
-  // 3. NETWORK DIAGNOSTICS: TEST PORT 25
+  // 3. JOB QUEUE MANAGEMENT (MongoDB Backed)
+  app.post('/api/jobs', async (req, res) => {
+    try {
+      if (!jobQueue) {
+        return res.status(503).json({ error: 'JobQueue is not initialized.' });
+      }
+
+      if (Array.isArray(req.body.emails)) {
+        const result = await jobQueue.enqueueBatch(req.body.emails, req.body);
+        return res.status(201).json(result);
+      }
+
+      if (!req.body.to || !req.body.from) {
+        return res.status(400).json({ error: 'Both "from" and "to" email addresses are required.' });
+      }
+
+      const result = await jobQueue.enqueue(req.body);
+      return res.status(201).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/jobs', async (req, res) => {
+    try {
+      if (!jobQueue) {
+        return res.status(503).json({ error: 'JobQueue is not initialized.' });
+      }
+
+      const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+      const offset = parseInt(req.query.offset || '0', 10);
+      const { status, recipient, search } = req.query;
+
+      const data = await jobQueue.getJobs({ status, recipient, limit, offset, search });
+      res.json(data);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/jobs/stats', async (req, res) => {
+    try {
+      if (!jobQueue) {
+        return res.status(503).json({ error: 'JobQueue is not initialized.' });
+      }
+
+      const stats = await jobQueue.getStats();
+      res.json(stats);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/jobs/:id', async (req, res) => {
+    try {
+      if (!jobQueue) {
+        return res.status(503).json({ error: 'JobQueue is not initialized.' });
+      }
+
+      const job = await jobQueue.getJobById(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      res.json(job);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/jobs/:id/retry', async (req, res) => {
+    try {
+      if (!jobQueue) {
+        return res.status(503).json({ error: 'JobQueue is not initialized.' });
+      }
+
+      const success = await jobQueue.retryJob(req.params.id);
+      if (!success) {
+        return res.status(404).json({ error: 'Job not found or not in failed/completed state' });
+      }
+      res.json({ success: true, message: `Job ${req.params.id} has been re-queued for delivery.` });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/jobs/retry-all', async (req, res) => {
+    try {
+      if (!jobQueue) {
+        return res.status(503).json({ error: 'JobQueue is not initialized.' });
+      }
+
+      const reQueued = await jobQueue.retryAllFailed();
+      res.json({ success: true, reQueued });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/jobs/:id', async (req, res) => {
+    try {
+      if (!jobQueue) {
+        return res.status(503).json({ error: 'JobQueue is not initialized.' });
+      }
+
+      const deleted = await jobQueue.deleteJob(req.params.id);
+      res.json({ success: deleted });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 4. NETWORK DIAGNOSTICS: TEST PORT 25
   app.post('/api/test-port25', async (req, res) => {
     try {
       const host = (req.body.host || 'gmail-smtp-in.l.google.com').trim();
@@ -221,7 +347,7 @@ function createApiServer(mta, inboundReceiverOrOptions = null, options = {}) {
     }
   });
 
-  // 4. DKIM MANAGEMENT (JSON-backed in config/dkim-keys.json)
+  // 5. DKIM MANAGEMENT
   app.post('/api/dkim/generate', (req, res) => {
     try {
       const { domain, selector } = req.body;
@@ -272,7 +398,7 @@ function createApiServer(mta, inboundReceiverOrOptions = null, options = {}) {
     res.json({ success: deleted });
   });
 
-  // 5. PRE-FLIGHT DELIVERABILITY & ANTI-SPAM AUDIT
+  // 6. PRE-FLIGHT DELIVERABILITY & ANTI-SPAM AUDIT
   app.get('/api/deliverability/audit/:domain', async (req, res) => {
     try {
       const selector = req.query.selector || 'default';
@@ -283,9 +409,7 @@ function createApiServer(mta, inboundReceiverOrOptions = null, options = {}) {
     }
   });
 
-  // 6. DOMAIN MANAGEMENT (JSON-backed in config/domains.json)
-  const DomainManager = require('./domain-manager');
-
+  // 7. DOMAIN MANAGEMENT
   app.get('/api/domains', (req, res) => {
     res.json(DomainManager.listDomains());
   });
@@ -325,61 +449,45 @@ function createApiServer(mta, inboundReceiverOrOptions = null, options = {}) {
     res.json({ success: deleted });
   });
 
-  // 7. INBOUND MAIL (INBOX & READING)
-  const InboundReceiver = require('./inbound-receiver');
-
-  app.get('/api/inbox', (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
-    const offset = parseInt(req.query.offset || '0', 10);
-    const { to, from, query } = req.query;
-    res.json(InboundReceiver.getInbox({ limit, offset, to, from, query }));
-  });
-
-  app.get('/api/inbox/:id', (req, res) => {
-    const email = InboundReceiver.getEmail(req.params.id);
-    if (!email) return res.status(404).json({ error: 'Email not found' });
-    res.json(email);
-  });
-
-  app.delete('/api/inbox/:id', (req, res) => {
-    const deleted = InboundReceiver.deleteEmail(req.params.id);
-    res.json({ success: deleted });
-  });
-
-  app.delete('/api/inbox', (req, res) => {
-    InboundReceiver.clearInbox();
-    res.json({ success: true, message: 'Inbox cleared' });
-  });
-
-  // 8. INBOUND WEBHOOK CALLBACK
-  app.get('/api/webhook', (req, res) => {
-    const configPath = path.join(__dirname, '..', 'config', 'server.json');
-    let webhookUrl = null;
-    if (fs.existsSync(configPath)) {
-      try {
-        webhookUrl = JSON.parse(fs.readFileSync(configPath, 'utf8')).webhookUrl || null;
-      } catch (e) {}
+  // 8. INBOUND MAIL (MONGODB BACKED INBOX)
+  app.get('/api/inbox', async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+      const offset = parseInt(req.query.offset || '0', 10);
+      const { to, from, query } = req.query;
+      const data = await InboundReceiver.getInbox({ limit, offset, to, from, query });
+      res.json(data);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
-    res.json({
-      webhookUrl: webhookUrl || process.env.WEBHOOK_URL || (inboundReceiver ? inboundReceiver.webhookUrl : null)
-    });
   });
 
-  app.post('/api/webhook', (req, res) => {
-    const { webhookUrl } = req.body;
-    const configPath = path.join(__dirname, '..', 'config', 'server.json');
-    let cfg = {};
-    if (fs.existsSync(configPath)) {
-      try { cfg = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch (e) {}
+  app.get('/api/inbox/:id', async (req, res) => {
+    try {
+      const email = await InboundReceiver.getEmail(req.params.id);
+      if (!email) return res.status(404).json({ error: 'Email not found' });
+      res.json(email);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
-    cfg.webhookUrl = webhookUrl || null;
-    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf8');
+  });
 
-    if (inboundReceiver) {
-      inboundReceiver.webhookUrl = webhookUrl || null;
+  app.delete('/api/inbox/:id', async (req, res) => {
+    try {
+      const deleted = await InboundReceiver.deleteEmail(req.params.id);
+      res.json({ success: deleted });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
+  });
 
-    res.json({ success: true, webhookUrl: cfg.webhookUrl });
+  app.delete('/api/inbox', async (req, res) => {
+    try {
+      const count = await InboundReceiver.clearInbox();
+      res.json({ success: true, deletedCount: count });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   return app;

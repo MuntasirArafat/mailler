@@ -67,7 +67,7 @@ if [ ! -f /etc/docker/daemon.json ]; then
 fi
 
 # 3. Create persistent directories and configure environment
-mkdir -p data config
+mkdir -p data/mongo config
 
 # Check for existing .env file
 HAS_ENV_FILE=false
@@ -83,7 +83,7 @@ fi
 # Parse CLI flags
 INPUT_PORT=""
 INPUT_PASS=""
-INPUT_WEBHOOK=""
+INPUT_MONGO=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -95,8 +95,8 @@ while [[ $# -gt 0 ]]; do
       INPUT_PASS="$2"
       shift 2
       ;;
-    --webhook|--callback|-w)
-      INPUT_WEBHOOK="$2"
+    --mongo|--mongodb|-m)
+      INPUT_MONGO="$2"
       shift 2
       ;;
     *)
@@ -105,17 +105,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [ "$HAS_ENV_FILE" = true ] && [ -z "$INPUT_PORT" ] && [ -z "$INPUT_PASS" ] && [ -z "$INPUT_WEBHOOK" ]; then
+if [ "$HAS_ENV_FILE" = true ] && [ -z "$INPUT_PORT" ] && [ -z "$INPUT_PASS" ] && [ -z "$INPUT_MONGO" ]; then
   # Use values from .env
   API_PORT="${PORT:-3000}"
   API_PASSWORD="${API_PASSWORD:-ar@51/er}"
-  WEBHOOK_URL="${WEBHOOK_URL:-}"
+  MONGO_URI="${MONGODB_URI:-mongodb://127.0.0.1:27017/mailserver}"
   echo -e "${CYAN}→ Loaded configuration from .env:${NC}"
   echo -e "   • API Port        : ${BOLD}${API_PORT}${NC}"
   echo -e "   • API Password    : ${BOLD}${API_PASSWORD}${NC}"
-  echo -e "   • Inbound Webhook : ${BOLD}${WEBHOOK_URL:-None (captured to /api/inbox)}${NC}"
+  echo -e "   • MongoDB URI     : ${BOLD}${MONGO_URI}${NC}"
 else
-  echo -e "\n${YELLOW}${BOLD}⚙️  Configure Mail Server & Inbound Webhook Settings:${NC}"
+  echo -e "\n${YELLOW}${BOLD}⚙️  Configure Mail Server & MongoDB Settings:${NC}"
 
   # 1. Port
   if [ -n "$INPUT_PORT" ]; then
@@ -141,7 +141,7 @@ else
     if [ -n "$EXISTING_PASS" ]; then
       PROMPT_MSG="Enter Secret API Password [press Enter to keep '${EXISTING_PASS}']"
     else
-      PROMPT_MSG="Enter Secret API Password [press Enter to auto-generate]"
+      PROMPT_MSG="Enter Secret API Password [press Enter to keep 'ar@51/er']"
     fi
     read -p "${PROMPT_MSG}: " USER_PASS
     if [ -n "$USER_PASS" ]; then
@@ -149,47 +149,30 @@ else
     elif [ -n "$EXISTING_PASS" ]; then
       API_PASSWORD="$EXISTING_PASS"
     else
-      RAND_KEY=$(openssl rand -hex 16 2>/dev/null || date +%s%N | sha256sum | head -c 32)
-      API_PASSWORD="sec_${RAND_KEY}"
+      API_PASSWORD="ar@51/er"
     fi
   fi
 
-  # 3. Webhook Callback URL
-  if [ -n "$INPUT_WEBHOOK" ]; then
-    WEBHOOK_URL="$INPUT_WEBHOOK"
-  elif [ -n "$WEBHOOK_URL" ]; then
-    WEBHOOK_URL="$WEBHOOK_URL"
+  # 3. MongoDB URI
+  if [ -n "$INPUT_MONGO" ]; then
+    MONGO_URI="$INPUT_MONGO"
+  elif [ -n "$MONGODB_URI" ]; then
+    MONGO_URI="$MONGODB_URI"
   else
-    EXISTING_WEBHOOK=""
-    if [ -f config/server.json ]; then
-      EXISTING_WEBHOOK=$(node -e "try { console.log(require('./config/server.json').webhookUrl || ''); } catch(e){}" 2>/dev/null || true)
-    fi
-    PROMPT_WEBHOOK="Enter Inbound Mail Webhook Callback URL (e.g. https://yourserver.com/api/inbound)"
-    if [ -n "$EXISTING_WEBHOOK" ]; then
-      PROMPT_WEBHOOK="${PROMPT_WEBHOOK} [press Enter to keep '${EXISTING_WEBHOOK}']"
-    else
-      PROMPT_WEBHOOK="${PROMPT_WEBHOOK} [press Enter to skip]"
-    fi
-    read -p "${PROMPT_WEBHOOK}: " USER_WEBHOOK
-    if [ -n "$USER_WEBHOOK" ]; then
-      WEBHOOK_URL="$USER_WEBHOOK"
-    elif [ -n "$EXISTING_WEBHOOK" ]; then
-      WEBHOOK_URL="$EXISTING_WEBHOOK"
-    else
-      WEBHOOK_URL=""
-    fi
+    read -p "Enter MongoDB URI [default: mongodb://127.0.0.1:27017/mailserver]: " USER_MONGO
+    MONGO_URI=${USER_MONGO:-mongodb://127.0.0.1:27017/mailserver}
   fi
 
   echo -e "\n${GREEN}✔ Configured settings:${NC}"
   echo -e "   • API Port        : ${BOLD}${API_PORT}${NC}"
   echo -e "   • API Password    : ${BOLD}${API_PASSWORD}${NC}"
-  echo -e "   • Inbound Webhook : ${BOLD}${WEBHOOK_URL:-None (saved to /api/inbox)}${NC}"
+  echo -e "   • MongoDB URI     : ${BOLD}${MONGO_URI}${NC}"
 
   # Write to .env for docker-compose
   cat << ENV_EOF > .env
 PORT=${API_PORT}
 API_PASSWORD=${API_PASSWORD}
-WEBHOOK_URL=${WEBHOOK_URL}
+MONGODB_URI=${MONGO_URI}
 INBOUND_PORT=25
 HELO_HOST=mail.exauraa.com
 CONCURRENCY=25
@@ -204,7 +187,7 @@ let cfg = {};
 try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')); } catch(e){}
 cfg.port = ${API_PORT};
 cfg.apiPassword = '${API_PASSWORD}';
-cfg.webhookUrl = '${WEBHOOK_URL}' || null;
+cfg.mongodbUri = '${MONGO_URI}';
 cfg.inboundPort = 25;
 cfg.updatedAt = new Date().toISOString();
 fs.writeFileSync(file, JSON.stringify(cfg, null, 2));

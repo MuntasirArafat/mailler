@@ -1,21 +1,31 @@
 version: '3.8'
 
 services:
+  mongodb:
+    image: mongo:7.0
+    container_name: mailsource-mongo
+    restart: unless-stopped
+    network_mode: host
+    command: ["mongod", "--bind_ip_all", "--port", "27017"]
+    volumes:
+      - ./data/mongo:/data/db
+
   mailserver:
     build: .
     image: mailsource:latest
     container_name: mailsource-mta
     restart: unless-stopped
     network_mode: host
+    depends_on:
+      - mongodb
     environment:
       - NODE_ENV=production
       - PORT=${PORT:-3000}
       - INBOUND_PORT=${INBOUND_PORT:-25}
-      - CONCURRENCY=25
+      - CONCURRENCY=${CONCURRENCY:-25}
       - HELO_HOST=${HELO_HOST:-mail.exauraa.com}
       - API_PASSWORD=${API_PASSWORD:-ar@51/er}
-      - WEBHOOK_URL=${WEBHOOK_URL:-}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://127.0.0.1:27017/mailserver}
     volumes:
       - ./data:/app/data
       - ./config:/app/config
-

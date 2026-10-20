@@ -28,10 +28,10 @@ fi
 APP_DIR="/opt/mailserver"
 SERVICE_NAME="mailserver"
 
-# 2. Parse CLI args or interactive prompt for Port, Password & Webhook
+# 2. Parse CLI args or interactive prompt for Port, Password & MongoDB URI
 INPUT_PORT=""
 INPUT_PASS=""
-INPUT_WEBHOOK=""
+INPUT_MONGO=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -43,8 +43,8 @@ while [[ $# -gt 0 ]]; do
       INPUT_PASS="$2"
       shift 2
       ;;
-    --webhook|--callback|-w)
-      INPUT_WEBHOOK="$2"
+    --mongo|--mongodb|-m)
+      INPUT_MONGO="$2"
       shift 2
       ;;
     *)
@@ -85,22 +85,22 @@ else
   API_PASSWORD="$INPUT_PASS"
 fi
 
-# Ask for Inbound Webhook Callback URL
-if [ -z "$INPUT_WEBHOOK" ] && [ -n "$WEBHOOK_URL" ]; then
-  INPUT_WEBHOOK="$WEBHOOK_URL"
+# Ask for MongoDB URI
+if [ -z "$INPUT_MONGO" ] && [ -n "$MONGODB_URI" ]; then
+  INPUT_MONGO="$MONGODB_URI"
 fi
 
-if [ -z "$INPUT_WEBHOOK" ]; then
-  read -p "Enter Inbound Mail Webhook Callback URL (e.g. https://yourserver.com/api/inbound) [press Enter to skip]: " USER_WEBHOOK
-  WEBHOOK_URL="${USER_WEBHOOK}"
+if [ -z "$INPUT_MONGO" ]; then
+  read -p "Enter MongoDB URI [default: mongodb://127.0.0.1:27017/mailserver]: " USER_MONGO
+  MONGODB_URI="${USER_MONGO:-mongodb://127.0.0.1:27017/mailserver}"
 else
-  WEBHOOK_URL="$INPUT_WEBHOOK"
+  MONGODB_URI="$INPUT_MONGO"
 fi
 
 echo -e "\n${GREEN}✔ Configuration chosen:${NC}"
 echo -e "  • Service Port    : ${BOLD}${API_PORT}${NC}"
 echo -e "  • API Password    : ${BOLD}${API_PASSWORD}${NC}"
-echo -e "  • Inbound Webhook : ${BOLD}${WEBHOOK_URL:-None (stored to /api/inbox)}${NC}"
+echo -e "  • MongoDB URI     : ${BOLD}${MONGODB_URI}${NC}"
 echo -e "\n${CYAN}Starting automated system setup...${NC}\n"
 
 # 3. Detect Package Manager & Install System Dependencies
@@ -219,7 +219,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=${APP_DIR}
-ExecStart=${NODE_BIN} index.js --port ${API_PORT} --password ${API_PASSWORD} --webhook "${WEBHOOK_URL}"
+ExecStart=${NODE_BIN} index.js --port ${API_PORT} --password ${API_PASSWORD} --mongo "${MONGODB_URI}"
 Restart=always
 RestartSec=5s
 

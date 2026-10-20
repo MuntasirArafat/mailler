@@ -23,7 +23,7 @@
   "port": 3000,
   "apiPassword": "ar@51/er",
   "inboundPort": 25,
-  "webhookUrl": null,
+  "mongodbUri": "mongodb://127.0.0.1:27017/mailserver",
   "concurrency": 25,
   "heloHost": "mail.exauraa.com",
   "updatedAt": "2026-10-20T12:27:32.713Z"

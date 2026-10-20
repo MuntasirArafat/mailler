@@ -1,77 +1,39 @@
-const fs = require('fs');
-const path = require('path');
-const http = require('http');
-const https = require('https');
 const { SMTPServer } = require('smtp-server');
 const { simpleParser } = require('mailparser');
+const { inboundCollection } = require('./db');
 
 class InboundReceiver {
   constructor(options = {}) {
-    this.port = options.port || parseInt(process.env.INBOUND_PORT || '25', 10);
+    this.port = options.port || 25;
     this.host = options.host || '0.0.0.0';
-    this.serverName = options.serverName || options.heloHost || 'mail.localmta.dev';
-    this.options = options;
+    this.serverName = options.serverName || 'mail.exauraa.com';
     this.server = null;
-    this.webhookUrl = options.webhookUrl || process.env.WEBHOOK_URL || null;
-  }
-
-  static getStorageFile() {
-    const dataDir = path.join(__dirname, '..', 'data');
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-    return path.join(dataDir, 'inbox.json');
-  }
-
-  static loadInbox() {
-    const file = this.getStorageFile();
-    if (!fs.existsSync(file)) return [];
-    try {
-      return JSON.parse(fs.readFileSync(file, 'utf8'));
-    } catch (e) {
-      return [];
-    }
-  }
-
-  static saveInbox(list) {
-    const file = this.getStorageFile();
-    // Keep last 1,000 received emails in persistent storage
-    const trimmed = list.slice(0, 1000);
-    fs.writeFileSync(file, JSON.stringify(trimmed, null, 2), 'utf8');
   }
 
   start() {
     return new Promise((resolve, reject) => {
       this.server = new SMTPServer({
         name: this.serverName,
-        banner: `${this.serverName} Inbound ESMTP Ready`,
+        banner: `${this.serverName} ESMTP Direct Mail Receiver Ready`,
         authOptional: true,
         disabledCommands: ['AUTH'],
-        hideSTARTTLS: !this.options.key,
-        key: this.options.key,
-        cert: this.options.cert,
-        size: 30 * 1024 * 1024, // 30MB max size
+        size: 25 * 1024 * 1024, // 25 MB max email size
 
-        onConnect: (session, callback) => callback(),
+        onConnect: (session, callback) => {
+          callback();
+        },
 
-        onMailFrom: (address, session, callback) => callback(),
+        onMailFrom: (address, session, callback) => {
+          callback();
+        },
 
         onRcptTo: (address, session, callback) => {
-          const DomainManager = require('./domain-manager');
-          const hosted = DomainManager.listDomains();
-
-          if (hosted.length > 0) {
-            const domain = address.address.split('@')[1]?.toLowerCase();
-            if (domain && !DomainManager.isDomainHosted(domain)) {
-              return callback(new Error(`550 5.7.1 Relay access denied: domain ${domain} not hosted on this server`));
-            }
-          }
           callback();
         },
 
         onData: (stream, session, callback) => {
           simpleParser(stream)
-            .then(parsed => {
+            .then(async parsed => {
               const fromVal = (parsed.from && parsed.from.value && parsed.from.value[0]) || {};
               const toVal = (parsed.to && parsed.to.value && parsed.to.value[0]) || {};
 
@@ -92,7 +54,7 @@ class InboundReceiver {
               const emailRecord = {
                 id: Date.now(),
                 message_id: parsed.messageId || null,
-                from_email: fromVal.address || session.envelope.mailFrom.address || '',
+                from_email: fromVal.address || (session.envelope.mailFrom && session.envelope.mailFrom.address) || '',
                 from_name: fromVal.name || '',
                 to_email: toVal.address || (session.envelope.rcptTo[0] && session.envelope.rcptTo[0].address) || '',
                 subject: parsed.subject || '(No Subject)',
@@ -101,22 +63,19 @@ class InboundReceiver {
                 headers: headersObj,
                 attachments,
                 raw_size: parsed.text ? parsed.text.length : 0,
-                received_at: Date.now()
+                status: 'received',
+                received_at: new Date()
               };
 
-              // Persist email
-              const inbox = InboundReceiver.loadInbox();
-              inbox.unshift(emailRecord);
-              InboundReceiver.saveInbox(inbox);
-
-              console.log(`[InboundReceiver] 📥 Received email from ${emailRecord.from_email} to ${emailRecord.to_email}: "${emailRecord.subject}"`);
-
-              // Optional Webhook dispatch to centralized system
-              if (this.webhookUrl) {
-                this.forwardWebhook(emailRecord);
+              try {
+                const col = inboundCollection();
+                await col.insertOne(emailRecord);
+                console.log(`[InboundReceiver] 📥 Saved incoming email from ${emailRecord.from_email} to ${emailRecord.to_email}: "${emailRecord.subject}" in MongoDB`);
+              } catch (dbErr) {
+                console.error(`[InboundReceiver] ✖ Failed to save email into MongoDB:`, dbErr.message);
               }
 
-              callback(null, 'OK: Message received');
+              callback(null, 'OK: Message received and queued in MongoDB');
             })
             .catch(err => {
               console.error('[InboundReceiver] Error parsing incoming email:', err.message);
@@ -135,7 +94,7 @@ class InboundReceiver {
 
       this.server.listen(this.port, this.host, () => {
         isListening = true;
-        console.log(`[InboundReceiver] Inbound SMTP Server listening on ${this.host}:${this.port}`);
+        console.log(`[InboundReceiver] Inbound SMTP Server listening on ${this.host}:${this.port} (backed by MongoDB)`);
         resolve(this.server);
       });
     });
@@ -155,74 +114,67 @@ class InboundReceiver {
     });
   }
 
-  forwardWebhook(emailRecord) {
-    try {
-      const url = new URL(this.webhookUrl);
-      const isHttps = url.protocol === 'https:';
-      const client = isHttps ? https : http;
+  static async getInbox({ limit = 50, offset = 0, to = null, from = null, query = null } = {}) {
+    const col = inboundCollection();
+    const filter = {};
 
-      const payload = JSON.stringify(emailRecord);
-      const req = client.request(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(payload),
-          'User-Agent': 'MailServer-Inbound-Relay/2.0'
-        },
-        timeout: 8000
-      });
-
-      req.on('error', (err) => {
-        console.warn(`[InboundReceiver] Webhook delivery failed: ${err.message}`);
-      });
-      req.write(payload);
-      req.end();
-    } catch (e) {
-      console.warn(`[InboundReceiver] Webhook error: ${e.message}`);
-    }
-  }
-
-  static getInbox({ limit = 50, offset = 0, to = null, from = null, query = null } = {}) {
-    let inbox = this.loadInbox();
     if (to) {
-      const cleanTo = to.toLowerCase();
-      inbox = inbox.filter(e => (e.to_email || '').toLowerCase().includes(cleanTo));
+      filter.to_email = { $regex: to, $options: 'i' };
     }
     if (from) {
-      const cleanFrom = from.toLowerCase();
-      inbox = inbox.filter(e => (e.from_email || '').toLowerCase().includes(cleanFrom));
+      filter.from_email = { $regex: from, $options: 'i' };
     }
     if (query) {
-      const q = query.toLowerCase();
-      inbox = inbox.filter(e =>
-        (e.subject || '').toLowerCase().includes(q) ||
-        (e.text_body || '').toLowerCase().includes(q)
-      );
+      filter.$or = [
+        { subject: { $regex: query, $options: 'i' } },
+        { text_body: { $regex: query, $options: 'i' } },
+        { from_email: { $regex: query, $options: 'i' } }
+      ];
     }
-    return inbox.slice(offset, offset + limit);
+
+    const total = await col.countDocuments(filter);
+    const emails = await col
+      .find(filter)
+      .sort({ received_at: -1 })
+      .skip(offset)
+      .limit(Math.min(limit, 200))
+      .toArray();
+
+    return {
+      total,
+      limit,
+      offset,
+      emails
+    };
   }
 
-  static getEmail(id) {
-    const inbox = this.loadInbox();
+  static async getEmail(id) {
+    const col = inboundCollection();
     const numId = typeof id === 'string' ? parseInt(id, 10) : id;
-    return inbox.find(e => e.id === numId) || null;
+    return await col.findOne({
+      $or: [{ id: numId }, { message_id: id }]
+    });
   }
 
-  static deleteEmail(id) {
-    const inbox = this.loadInbox();
+  static async deleteEmail(id) {
+    const col = inboundCollection();
     const numId = typeof id === 'string' ? parseInt(id, 10) : id;
-    const initialLen = inbox.length;
-    const filtered = inbox.filter(e => e.id !== numId);
-    if (filtered.length !== initialLen) {
-      this.saveInbox(filtered);
-      return true;
-    }
-    return false;
+    const result = await col.deleteOne({
+      $or: [{ id: numId }, { message_id: id }]
+    });
+    return result.deletedCount > 0;
   }
 
-  static clearInbox() {
-    this.saveInbox([]);
-    return true;
+  static async clearInbox() {
+    const col = inboundCollection();
+    const result = await col.deleteMany({});
+    return result.deletedCount;
+  }
+
+  static async getStats() {
+    const col = inboundCollection();
+    const total = await col.estimatedDocumentCount();
+    return { total };
   }
 }
 

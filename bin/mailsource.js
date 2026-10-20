@@ -210,13 +210,16 @@ async function main() {
       const res = await apiRequest('GET', '/health');
       if (res.status === 200) {
         const d = res.data;
-        console.log(`\n${colors.cyan}${colors.bold}🚀 Mail Server Status (Stateless Sender Node):${colors.reset}`);
+        console.log(`\n${colors.cyan}${colors.bold}🚀 Production Mail Server Status:${colors.reset}`);
         console.log(`  • Server State : ${colors.green}${colors.bold}● ${d.status.toUpperCase()}${colors.reset}`);
-        console.log(`  • Role         : ${colors.cyan}${d.role || 'stateless-mta-worker'}${colors.reset}`);
+        console.log(`  • Database     : ${d.database === 'connected' ? colors.green + '✔ MongoDB (CONNECTED)' : colors.red + '✖ MongoDB (OFFLINE)'}${colors.reset}`);
+        console.log(`  • Role         : ${colors.cyan}${d.role || 'production-mta-worker'}${colors.reset}`);
         console.log(`  • HELO Host    : ${colors.yellow}${d.heloHost || 'default'}${colors.reset}`);
         console.log(`  • Uptime       : ${(d.uptime / 60).toFixed(1)} minutes`);
         console.log(`  • Memory RSS   : ${(d.memory.rss / (1024 * 1024)).toFixed(1)} MB`);
-        console.log(`  • Architecture : ${colors.green}Stateless (Controlled Centrally - No SQLite/Queues)${colors.reset}`);
+        if (d.queue) {
+          console.log(`  • Queue Stats  : ${colors.yellow}Queued: ${d.queue.queued}${colors.reset} | ${colors.cyan}Processing: ${d.queue.processing}${colors.reset} | ${colors.green}Completed: ${d.queue.completed}${colors.reset} | ${colors.red}Failed: ${d.queue.failed}${colors.reset}`);
+        }
       } else {
         console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);
       }
@@ -227,20 +230,20 @@ async function main() {
     if (command === 'inbox') {
       const res = await apiRequest('GET', '/inbox?limit=20');
       if (res.status === 200) {
-        const list = res.data;
+        const list = res.data.emails || (Array.isArray(res.data) ? res.data : []);
         console.log(`\n${colors.cyan}${colors.bold}📥 Received Inbound Emails (${list.length}):${colors.reset}\n`);
         if (list.length === 0) {
-          console.log(`  ${colors.dim}(No received emails yet)${colors.reset}`);
+          console.log(`  ${colors.dim}(No received emails in MongoDB yet)${colors.reset}`);
           return;
         }
 
-        console.log(`${colors.bold}${'ID'.padEnd(6)} ${'FROM'.padEnd(30)} ${'SUBJECT'.padEnd(35)} ${'RECEIVED'}${colors.reset}`);
-        console.log('-'.repeat(85));
+        console.log(`${colors.bold}${'ID'.padEnd(16)} ${'FROM'.padEnd(28)} ${'SUBJECT'.padEnd(30)} ${'RECEIVED'}${colors.reset}`);
+        console.log('-'.repeat(90));
         for (const item of list) {
           const date = new Date(item.received_at).toLocaleString();
-          const from = (item.from_email || '').slice(0, 28).padEnd(30);
-          const subj = (item.subject || '(no subject)').slice(0, 33).padEnd(35);
-          console.log(`${String(item.id).padEnd(6)} ${from} ${subj} ${colors.dim}${date}${colors.reset}`);
+          const from = (item.from_email || '').slice(0, 26).padEnd(28);
+          const subj = (item.subject || '(no subject)').slice(0, 28).padEnd(30);
+          console.log(`${String(item.id).slice(-14).padEnd(16)} ${from} ${subj} ${colors.dim}${date}${colors.reset}`);
         }
         console.log(`\n${colors.dim}To read an email, run: mailsource read <ID>${colors.reset}`);
       } else {
@@ -379,15 +382,64 @@ async function main() {
 
     // 6. QUEUE COMMAND
     if (command === 'queue' || command === 'jobs') {
-      console.log(`\n${colors.cyan}Notice:${colors.reset} Local SQLite job queues have been removed.`);
-      console.log(`This VPS operates as a ${colors.green}stateless direct MTA sender node${colors.reset}.`);
-      console.log(`All job scheduling, queues, and retries are managed by your centralized control system.`);
+      const statsRes = await apiRequest('GET', '/jobs/stats');
+      const jobsRes = await apiRequest('GET', '/jobs?limit=15');
+
+      if (statsRes.status === 200 && jobsRes.status === 200) {
+        const stats = statsRes.data;
+        const jobs = jobsRes.data.jobs || [];
+
+        console.log(`\n${colors.cyan}${colors.bold}📬 Outbound Mail Job Queue (MongoDB):${colors.reset}`);
+        console.log(`  • Status Summary : ${colors.yellow}Queued: ${stats.queued}${colors.reset} | ${colors.cyan}Processing: ${stats.processing}${colors.reset} | ${colors.green}Completed: ${stats.completed}${colors.reset} | ${colors.red}Failed: ${stats.failed}${colors.reset}`);
+        console.log(`  • Concurrency    : ${stats.concurrency} worker slots (${stats.activeWorkers} currently active)\n`);
+
+        if (jobs.length === 0) {
+          console.log(`  ${colors.dim}(No jobs in queue yet. Enqueue with: mailsource send ...)${colors.reset}\n`);
+          return;
+        }
+
+        console.log(`${colors.bold}${'JOB ID'.padEnd(20)} ${'RECIPIENT'.padEnd(26)} ${'STATUS'.padEnd(14)} ${'ATTEMPTS'.padEnd(10)} ${'DETAILS'}${colors.reset}`);
+        console.log('-'.repeat(95));
+        for (const j of jobs) {
+          let statusStr = j.status.toUpperCase();
+          if (j.status === 'completed') statusStr = colors.green + statusStr + colors.reset;
+          else if (j.status === 'failed') statusStr = colors.red + statusStr + colors.reset;
+          else if (j.status === 'processing') statusStr = colors.cyan + statusStr + colors.reset;
+          else statusStr = colors.yellow + statusStr + colors.reset;
+
+          const recipient = (j.recipient || '').slice(0, 24).padEnd(26);
+          const attempts = `${j.attempts}/${j.maxRetries}`.padEnd(10);
+          const details = j.lastError ? colors.red + j.lastError.slice(0, 30) + colors.reset : (j.host ? colors.dim + j.host + colors.reset : '');
+
+          console.log(`${j.jobId.slice(0, 18).padEnd(20)} ${recipient} ${statusStr.padEnd(23)} ${attempts} ${details}`);
+        }
+        console.log(`\n${colors.dim}To retry failed jobs: mailsource retry [jobId]${colors.reset}\n`);
+      } else {
+        console.error(`${colors.red}✖ Failed to fetch queue status: ${JSON.stringify(jobsRes.data || statsRes.data)}${colors.reset}`);
+      }
       return;
     }
 
     // 7. RETRY FAILED JOBS
     if (command === 'retry' || command === 'retry-failed') {
-      console.log(`\n${colors.cyan}Notice:${colors.reset} Retries and job dispatch are managed centrally by your main server.`);
+      const jobId = args[1];
+      if (jobId) {
+        console.log(`${colors.cyan}▶ Re-queuing failed job ${colors.bold}${jobId}${colors.reset}...`);
+        const res = await apiRequest('POST', `/jobs/${jobId}/retry`);
+        if (res.status === 200) {
+          console.log(`\n${colors.green}${colors.bold}✔ Job ${jobId} has been successfully re-queued for delivery.${colors.reset}\n`);
+        } else {
+          console.error(`\n${colors.red}✖ Error: ${res.data.error || JSON.stringify(res.data)}${colors.reset}\n`);
+        }
+      } else {
+        console.log(`${colors.cyan}▶ Re-queuing all failed jobs...${colors.reset}`);
+        const res = await apiRequest('POST', '/jobs/retry-all');
+        if (res.status === 200) {
+          console.log(`\n${colors.green}${colors.bold}✔ Successfully re-queued ${res.data.reQueued} failed job(s) for delivery.${colors.reset}\n`);
+        } else {
+          console.error(`\n${colors.red}✖ Error: ${res.data.error || JSON.stringify(res.data)}${colors.reset}\n`);
+        }
+      }
       return;
     }
 
