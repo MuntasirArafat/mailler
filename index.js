@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const DirectMta = require('./src/direct-mta');
+const InboundReceiver = require('./src/inbound-receiver');
 const createApiServer = require('./src/api-server');
 
 // Parse Command Line Arguments
@@ -16,6 +17,10 @@ function parseArgs() {
       parsed.password = args[++i];
     } else if (arg === '--helo') {
       parsed.heloHost = args[++i];
+    } else if (arg === '--inbound') {
+      parsed.inboundPort = parseInt(args[++i], 10);
+    } else if (arg === '--webhook' || arg === '-w') {
+      parsed.webhookUrl = args[++i];
     }
   }
   return parsed;
@@ -50,8 +55,10 @@ if (!API_PASSWORD) {
   console.log(`\n[Security] No API password configured. Generated secure key: ${API_PASSWORD}`);
 }
 
-// 3. Resolve HELO hostname
+// 3. Resolve HELO hostname, Inbound Port & Webhook URL
 const HELO_HOST = cliArgs.heloHost || process.env.HELO_HOST || savedConfig.heloHost || 'mail.localmta.dev';
+const INBOUND_PORT = cliArgs.inboundPort || parseInt(process.env.INBOUND_PORT || '', 10) || savedConfig.inboundPort || 25;
+const WEBHOOK_URL = cliArgs.webhookUrl || process.env.WEBHOOK_URL || savedConfig.webhookUrl || null;
 
 // Save configuration to config/server.json so it persists across restarts
 savedConfig = {
@@ -59,6 +66,8 @@ savedConfig = {
   port: API_PORT,
   apiPassword: API_PASSWORD,
   heloHost: HELO_HOST,
+  inboundPort: INBOUND_PORT,
+  webhookUrl: WEBHOOK_URL,
   updatedAt: new Date().toISOString()
 };
 fs.writeFileSync(configFile, JSON.stringify(savedConfig, null, 2), 'utf8');
@@ -69,17 +78,42 @@ async function start() {
     heloHost: HELO_HOST
   });
 
-  // 5. Initialize Protected REST API for centralized dispatch
-  const app = createApiServer(mta, { apiPassword: API_PASSWORD });
+  // 5. Initialize Inbound Mail Receiver (Port 25 SMTP listening + Webhook forwarding)
+  const inboundReceiver = new InboundReceiver({
+    port: INBOUND_PORT,
+    host: '0.0.0.0',
+    serverName: HELO_HOST,
+    webhookUrl: WEBHOOK_URL
+  });
+
+  let inboundRunning = false;
+  try {
+    await inboundReceiver.start();
+    inboundRunning = true;
+  } catch (err) {
+    console.error(`\n⚠️  [InboundReceiver Warning] Could not start inbound SMTP receiver on port ${INBOUND_PORT}: ${err.message}`);
+    if (err.code === 'EADDRINUSE') {
+      console.error(`👉 Port ${INBOUND_PORT} is in use by another process. Check with: ss -tulpn | grep :${INBOUND_PORT}`);
+    }
+    console.error(`   Outbound direct MTA and REST API will still proceed.\n`);
+  }
+
+  // 6. Initialize Protected REST API for centralized dispatch
+  const app = createApiServer(mta, inboundReceiver, {
+    apiPassword: API_PASSWORD,
+    webhookUrl: WEBHOOK_URL
+  });
 
   const server = app.listen(API_PORT, () => {
     console.log(`\n=============================================================`);
-    console.log(`🚀 STATELESS DIRECT NODE.JS MTA SENDER NODE (PROTECTED API)`);
+    console.log(`🚀 STATELESS DIRECT NODE.JS MTA SENDER & INBOUND RECEIVER NODE`);
     console.log(`=============================================================`);
     console.log(`📡 REST API Endpoint     : http://localhost:${API_PORT}`);
     console.log(`🔒 API Authentication    : REQUIRED`);
     console.log(`🔑 Secret API Password   : ${API_PASSWORD}`);
     console.log(`⚡ Outbound Engine       : Direct MX Delivery (Port 25 with STARTTLS)`);
+    console.log(`📥 Inbound Receiver      : ${inboundRunning ? `smtp://0.0.0.0:${INBOUND_PORT}` : 'OFFLINE'}`);
+    console.log(`🔗 Webhook Callback URL  : ${WEBHOOK_URL || 'NONE (captured to /api/inbox)'}`);
     console.log(`💾 Architecture          : Stateless Worker (Zero SQLite - Centralized Control)`);
     console.log(`🛡️ Anti-Spam Shield      : DKIM + SPF Alignment + RFC 8058`);
     console.log(`=============================================================`);
@@ -91,6 +125,9 @@ async function start() {
 
   const shutdown = async () => {
     console.log('\nGracefully shutting down Mail Server...');
+    if (inboundRunning) {
+      await inboundReceiver.stop();
+    }
     server.close(() => {
       console.log('Server stopped cleanly.');
       process.exit(0);

@@ -5,9 +5,16 @@ const DeliverabilityAuditor = require('./deliverability-auditor');
 const DnsChecker = require('./dns-checker');
 const dkimManager = require('./dkim-manager');
 
-function createApiServer(mta, options = {}) {
+function createApiServer(mta, inboundReceiverOrOptions = null, options = {}) {
+  let inboundReceiver = null;
+  let opts = options;
+  if (inboundReceiverOrOptions && typeof inboundReceiverOrOptions.start === 'function') {
+    inboundReceiver = inboundReceiverOrOptions;
+  } else if (inboundReceiverOrOptions && typeof inboundReceiverOrOptions === 'object') {
+    opts = inboundReceiverOrOptions;
+  }
   const app = express();
-  const apiPassword = options.apiPassword || process.env.API_PASSWORD || process.env.API_KEY || null;
+  const apiPassword = opts.apiPassword || process.env.API_PASSWORD || process.env.API_KEY || null;
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -316,6 +323,63 @@ function createApiServer(mta, options = {}) {
   app.delete('/api/domains/:domain', (req, res) => {
     const deleted = DomainManager.deleteDomain(req.params.domain);
     res.json({ success: deleted });
+  });
+
+  // 7. INBOUND MAIL (INBOX & READING)
+  const InboundReceiver = require('./inbound-receiver');
+
+  app.get('/api/inbox', (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+    const offset = parseInt(req.query.offset || '0', 10);
+    const { to, from, query } = req.query;
+    res.json(InboundReceiver.getInbox({ limit, offset, to, from, query }));
+  });
+
+  app.get('/api/inbox/:id', (req, res) => {
+    const email = InboundReceiver.getEmail(req.params.id);
+    if (!email) return res.status(404).json({ error: 'Email not found' });
+    res.json(email);
+  });
+
+  app.delete('/api/inbox/:id', (req, res) => {
+    const deleted = InboundReceiver.deleteEmail(req.params.id);
+    res.json({ success: deleted });
+  });
+
+  app.delete('/api/inbox', (req, res) => {
+    InboundReceiver.clearInbox();
+    res.json({ success: true, message: 'Inbox cleared' });
+  });
+
+  // 8. INBOUND WEBHOOK CALLBACK
+  app.get('/api/webhook', (req, res) => {
+    const configPath = path.join(__dirname, '..', 'config', 'server.json');
+    let webhookUrl = null;
+    if (fs.existsSync(configPath)) {
+      try {
+        webhookUrl = JSON.parse(fs.readFileSync(configPath, 'utf8')).webhookUrl || null;
+      } catch (e) {}
+    }
+    res.json({
+      webhookUrl: webhookUrl || process.env.WEBHOOK_URL || (inboundReceiver ? inboundReceiver.webhookUrl : null)
+    });
+  });
+
+  app.post('/api/webhook', (req, res) => {
+    const { webhookUrl } = req.body;
+    const configPath = path.join(__dirname, '..', 'config', 'server.json');
+    let cfg = {};
+    if (fs.existsSync(configPath)) {
+      try { cfg = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch (e) {}
+    }
+    cfg.webhookUrl = webhookUrl || null;
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf8');
+
+    if (inboundReceiver) {
+      inboundReceiver.webhookUrl = webhookUrl || null;
+    }
+
+    res.json({ success: true, webhookUrl: cfg.webhookUrl });
   });
 
   return app;

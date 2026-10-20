@@ -1,0 +1,10 @@
+{
+  "exauraa.com": {
+    "domain": "exauraa.com",
+    "selector": "default",
+    "is_verified": 0,
+    "inbound_enabled": 1,
+    "outbound_enabled": 1,
+    "created_at": 1792499263326
+  }
+}

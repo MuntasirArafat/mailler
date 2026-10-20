@@ -9,12 +9,13 @@ services:
     network_mode: host
     environment:
       - NODE_ENV=production
-      - PORT=3000
-      - INBOUND_PORT=25
+      - PORT=${PORT:-3000}
+      - INBOUND_PORT=${INBOUND_PORT:-25}
       - CONCURRENCY=25
-      - HELO_HOST=mail.exauraa.com
-      # Set your secret API password below:
-      - API_PASSWORD=sec_change_this_to_a_secure_password
+      - HELO_HOST=${HELO_HOST:-mail.exauraa.com}
+      - API_PASSWORD=${API_PASSWORD:-ar@51/er}
+      - WEBHOOK_URL=${WEBHOOK_URL:-}
     volumes:
       - ./data:/app/data
       - ./config:/app/config
+

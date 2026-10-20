@@ -28,9 +28,10 @@ fi
 APP_DIR="/opt/mailserver"
 SERVICE_NAME="mailserver"
 
-# 2. Parse CLI args or interactive prompt for Port & Password
+# 2. Parse CLI args or interactive prompt for Port, Password & Webhook
 INPUT_PORT=""
 INPUT_PASS=""
+INPUT_WEBHOOK=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --password|--pass|-k)
       INPUT_PASS="$2"
+      shift 2
+      ;;
+    --webhook|--callback|-w)
+      INPUT_WEBHOOK="$2"
       shift 2
       ;;
     *)
@@ -80,9 +85,22 @@ else
   API_PASSWORD="$INPUT_PASS"
 fi
 
+# Ask for Inbound Webhook Callback URL
+if [ -z "$INPUT_WEBHOOK" ] && [ -n "$WEBHOOK_URL" ]; then
+  INPUT_WEBHOOK="$WEBHOOK_URL"
+fi
+
+if [ -z "$INPUT_WEBHOOK" ]; then
+  read -p "Enter Inbound Mail Webhook Callback URL (e.g. https://yourserver.com/api/inbound) [press Enter to skip]: " USER_WEBHOOK
+  WEBHOOK_URL="${USER_WEBHOOK}"
+else
+  WEBHOOK_URL="$INPUT_WEBHOOK"
+fi
+
 echo -e "\n${GREEN}✔ Configuration chosen:${NC}"
-echo -e "  • Service Port : ${BOLD}${API_PORT}${NC}"
-echo -e "  • API Password : ${BOLD}${API_PASSWORD}${NC}"
+echo -e "  • Service Port    : ${BOLD}${API_PORT}${NC}"
+echo -e "  • API Password    : ${BOLD}${API_PASSWORD}${NC}"
+echo -e "  • Inbound Webhook : ${BOLD}${WEBHOOK_URL:-None (stored to /api/inbox)}${NC}"
 echo -e "\n${CYAN}Starting automated system setup...${NC}\n"
 
 # 3. Detect Package Manager & Install System Dependencies
@@ -143,12 +161,13 @@ fi
 
 cd "${APP_DIR}"
 
-# 5. Persist Port and Password into config/server.json
+# 5. Persist Port, Password, and Webhook into config/server.json
 cat <<EOF > "${APP_DIR}/config/server.json"
 {
   "port": ${API_PORT},
   "apiPassword": "${API_PASSWORD}",
   "inboundPort": 25,
+  "webhookUrl": "${WEBHOOK_URL}",
   "concurrency": 25,
   "heloHost": "mail.localmta.dev",
   "updatedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -200,7 +219,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=${APP_DIR}
-ExecStart=${NODE_BIN} index.js --port ${API_PORT} --password ${API_PASSWORD}
+ExecStart=${NODE_BIN} index.js --port ${API_PORT} --password ${API_PASSWORD} --webhook "${WEBHOOK_URL}"
 Restart=always
 RestartSec=5s
 
@@ -213,6 +232,7 @@ Environment=NODE_ENV=production
 Environment=PORT=${API_PORT}
 Environment=API_PASSWORD=${API_PASSWORD}
 Environment=INBOUND_PORT=25
+Environment=WEBHOOK_URL=${WEBHOOK_URL}
 Environment=CONCURRENCY=25
 
 # Standard Logging to systemd journal

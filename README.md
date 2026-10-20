@@ -10,13 +10,14 @@ A production-grade, lightweight, stateless **Direct MTA Mail Sender Node** in No
 
 - **Stateless Sending Nodes**: Designed to run on multiple VPS worker nodes controlled centrally. No local database, no SQLite locks, zero persistence bottlenecks.
 - **Direct Port 25 Delivery**: Direct socket delivery to destination MX (Google, Microsoft, Yahoo, etc.) with opportunistic STARTTLS.
+- **Inbound Mail Receiver with Instant Webhook**: Listens on Port 25 for incoming emails, parses MIME, extracts attachments, and automatically dispatches a real-time HTTP POST JSON webhook callback to your central system.
 - **Direct Single & Batch Send API**:
-  - `POST /api/send`: Live direct send returning delivery status, MX banner, and messageId immediately.
+  - `POST /api/send`: Live direct send returning delivery status, MX banner, and messageId immediately (supports plain text, HTML, or both).
   - `POST /api/send-batch`: Parallel direct send across multiple recipients with concurrency throttling.
 - **Dynamic DKIM from Central Controller**: Pass DKIM private keys directly in send requests or store in `config/dkim-keys.json`.
 - **Anti-Spam & Deliverability Shield**:
   - Automatic 2048-bit RSA DKIM signing.
-  - Strict RFC 5321 Return-Path SPF alignment.
+  - Strict RFC 5321 Return-Path SPF alignment + HELO SPF support.
   - RFC 8058 One-Click List-Unsubscribe headers (`List-Unsubscribe` & `List-Unsubscribe-Post`).
   - Pre-flight DNS deliverability auditor (SPF, DKIM, DMARC, Port 25 reachability).
 - **Password Authentication**: Every API request is strictly secured by password authentication.
@@ -25,29 +26,35 @@ A production-grade, lightweight, stateless **Direct MTA Mail Sender Node** in No
 
 ## 🚀 VPS One-Command Automated Setup
 
-The included installer [`deploy.sh`](file:///Users/muntasirarafat/Documents/mailserver/deploy.sh) asks for your desired **API Port** and **API Password**, then fully automates everything: installs Node 22 LTS, sets up firewall rules, writes configuration, and creates a persistent background `systemd` service (`mailserver.service`) that automatically starts on server reboots.
+The installer scripts ([`deploy.sh`](file:///Users/muntasirarafat/Documents/mailserver/deploy.sh) and [`docker-deploy.sh`](file:///Users/muntasirarafat/Documents/mailserver/docker-deploy.sh)) interactively configure:
+1. **API Port** (Default: `3000`)
+2. **API Password** (Secret authentication key)
+3. **Inbound Mail Webhook Callback URL** (When any incoming email is received, it is immediately POSTed as JSON to this URL)
 
-### Step 1: Run Installer on VPS (Ubuntu / Debian / Rocky / CentOS)
+### Option A: Standard VPS Installation (Systemd Service)
 ```bash
 sudo bash deploy.sh
 ```
 
-### Step 2: Interactive Prompt
-When you run the script, it asks:
+### Option B: Docker Container Installation (Recommended)
+```bash
+sudo bash docker-deploy.sh
+```
+
+### Interactive Setup Prompt Example:
 ```text
 ⚙️  Configure Your Mail Server Credentials:
-Select API Service Port [default: 3000]: 8080
-Enter Secret API Password [press Enter to auto-generate]: mySecretPassword123
+Select API Service Port [default: 3000]: 3000
+Enter Secret API Password [press Enter to auto-generate]: ar@51/er
+Enter Inbound Mail Webhook Callback URL (e.g. https://central.example.com/api/inbound) [press Enter to skip]: https://central.example.com/api/inbound
 
 ✔ Configuration chosen:
-  • Service Port : 8080
-  • API Password : mySecretPassword123
-
-Starting automated system setup...
+  • API Port        : 3000
+  • API Password    : ar@51/er
+  • Inbound Webhook : https://central.example.com/api/inbound
 ```
-The installer opens firewall ports (25, 2525, 8080), installs dependencies, enables the systemd service, and verifies server health.
 
-*(Optional: Pass flags for non-interactive / CI deployments: `sudo bash deploy.sh -p 8080 -k mySecretPassword123`)*
+*(Non-interactive flags are supported: `sudo bash deploy.sh -p 3000 -k ar@51/er -w https://central.example.com/api/inbound`)*
 
 ### Managing the Background Service:
 ```bash
@@ -118,13 +125,13 @@ You can also start the server directly using command-line arguments or environme
 
 ```bash
 # Using CLI flags (recommended)
-node index.js --port 8080 --password mySecretPassword123
+node index.js --port 3000 --password "ar@51/er" --webhook "https://central.example.com/api/inbound"
 
 # Shorthand flags
-node index.js -p 8080 -k mySecretPassword123
+node index.js -p 3000 -k "ar@51/er" -w "https://central.example.com/api/inbound"
 
 # Using environment variables
-PORT=8080 API_PASSWORD=mySecretPassword123 npm start
+PORT=3000 API_PASSWORD="ar@51/er" WEBHOOK_URL="https://central.example.com/api/inbound" npm start
 ```
 
 Configuration is automatically saved to [`config/server.json`](file:///Users/muntasirarafat/Documents/mailserver/config/server.json) so your settings persist across restarts.
@@ -153,7 +160,7 @@ Returns system status, worker role, uptime, memory, and HELO hostname.
 
 **Request:**
 ```bash
-curl -H "x-api-key: mySecretPassword123" http://localhost:8080/api/health
+curl -H "x-api-key: ar@51/er" http://localhost:3000/api/health
 ```
 
 **Response (`200 OK`):**
@@ -196,18 +203,33 @@ Immediately delivers an email directly to the destination MX on port 25 and retu
 | `headers` | object | No | Custom email headers (e.g. `{"X-Campaign-ID": "camp_99"}`). |
 | `dkim` | object | No | Optional dynamic DKIM passed from central controller: `{"domainName":"domain.com", "keySelector":"default", "privateKey":"..."}`. |
 
-**Example:**
+**Example A: Send Plain Text Email:**
 ```bash
-curl -X POST http://localhost:8080/api/send \
-  -H "x-api-key: mySecretPassword123" \
+curl -X POST http://localhost:3000/api/send \
+  -H "x-api-key: ar@51/er" \
   -H "Content-Type: application/json" \
   -d '{
-    "from": "notifications@yourdomain.com",
-    "name": "My Company",
+    "from": "noreply@exauraa.com",
+    "name": "Support",
+    "to": "client@gmail.com",
+    "subject": "Plain Text Notification",
+    "text": "Hello!\n\nThis is a pure plain-text email sent directly to your destination mail server without HTML."
+  }'
+```
+
+**Example B: Send HTML Email (With Auto Plain-Text Fallback & DKIM):**
+```bash
+curl -X POST http://localhost:3000/api/send \
+  -H "x-api-key: ar@51/er" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from": "noreply@exauraa.com",
+    "name": "Support Team",
     "to": "client@gmail.com",
     "subject": "Direct MX Delivery Test",
     "html": "<h1>Direct Delivery Succeeded</h1><p>Sent directly to MX without 3rd party relays.</p>",
-    "unsubscribeUrl": "https://yourdomain.com/unsubscribe?user=client"
+    "text": "Direct Delivery Succeeded. Sent directly to MX without 3rd party relays.",
+    "unsubscribeUrl": "https://exauraa.com/unsubscribe?user=client"
   }'
 ```
 
@@ -215,7 +237,7 @@ curl -X POST http://localhost:8080/api/send \
 ```json
 {
   "success": true,
-  "messageId": "<f7a30369-2ba1-40be-8451-b0db3717282b@yourdomain.com>",
+  "messageId": "<f7a30369-2ba1-40be-8451-b0db3717282b@exauraa.com>",
   "dkimSigned": true,
   "recipient": "client@gmail.com",
   "durationMs": 420,
@@ -282,10 +304,68 @@ Allows your centralized system to dispatch an array of emails to this VPS node f
 
 ---
 
-### 5. Inbound Mail Reader (Receive & Query Emails)
+### 5. Inbound Mail Receiving & Webhook Callback (Receive Incoming Emails)
+
+The mail server runs an Inbound SMTP service on **Port 25** (or configured port). When an email arrives:
+1. It is parsed by `mailparser` (extracts headers, sender, recipient, subject, plain text body, HTML body, and base64 attachments).
+2. It is saved in persistent memory/file (`data/inbox.json`).
+3. **Webhook Callback Dispatch**: If a Webhook Callback URL is configured, the server immediately performs an HTTP `POST` request with `Content-Type: application/json` containing the complete parsed message.
+
+#### 🔔 Webhook Callback Payload Specification
+When an incoming email is delivered to your server, your callback URL receives this JSON payload:
+
+```json
+{
+  "id": 1774182900000,
+  "message_id": "<CABe4d8f...example@gmail.com>",
+  "from_email": "sender@gmail.com",
+  "from_name": "John Doe",
+  "to_email": "contact@yourdomain.com",
+  "subject": "Inquiry regarding your services",
+  "text_body": "Hi there,\nI would like more information about your platform.\nThanks,\nJohn",
+  "html_body": "<p>Hi there,<br>I would like more information about your platform.<br>Thanks,<br>John</p>",
+  "headers": {
+    "date": "Tue, 20 Oct 2026 12:30:00 +0000",
+    "from": "John Doe <sender@gmail.com>",
+    "to": "contact@yourdomain.com",
+    "subject": "Inquiry regarding your services"
+  },
+  "attachments": [
+    {
+      "filename": "proposal.pdf",
+      "contentType": "application/pdf",
+      "size": 48200,
+      "contentBase64": "JVBERi0xLjQK..."
+    }
+  ],
+  "raw_size": 52140,
+  "received_at": 1774182900000
+}
+```
+
+#### `GET /api/webhook`
+Check the currently active Webhook Callback URL.
+```bash
+curl -H "x-api-key: ar@51/er" http://localhost:3000/api/webhook
+```
+**Response:**
+```json
+{
+  "webhookUrl": "https://central.example.com/api/inbound"
+}
+```
+
+#### `POST /api/webhook`
+Dynamically set or change the Inbound Webhook Callback URL without restarting the service.
+```bash
+curl -X POST http://localhost:3000/api/webhook \
+  -H "x-api-key: ar@51/er" \
+  -H "Content-Type: application/json" \
+  -d '{"webhookUrl": "https://central.example.com/api/inbound"}'
+```
 
 #### `GET /api/inbox`
-List received emails captured by the inbound SMTP receiver.
+List received emails stored on the node.
 - Query Parameters:
   - `limit` (default: 50, max: 200)
   - `offset` (default: 0)
@@ -294,52 +374,27 @@ List received emails captured by the inbound SMTP receiver.
   - `query` (search subject and text content)
 
 ```bash
-curl -H "x-api-key: mySecretPassword123" "http://localhost:8080/api/inbox?limit=10"
-```
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "message_id": "<user-request-101@external.com>",
-    "from_email": "client@external.com",
-    "from_name": "Client Name",
-    "to_email": "support@yourdomain.com",
-    "subject": "Help with account setup",
-    "raw_size": 1420,
-    "received_at": 1792427620392
-  }
-]
+curl -H "x-api-key: ar@51/er" "http://localhost:3000/api/inbox?limit=10"
 ```
 
 #### `GET /api/inbox/:id`
-Retrieve full email including headers, parsed HTML, plain text, and attachment metadata.
+Retrieve a single email by timestamp ID with full body and attachments.
 ```bash
-curl -H "x-api-key: mySecretPassword123" http://localhost:8080/api/inbox/1
-```
-**Response:**
-```json
-{
-  "id": 1,
-  "message_id": "<user-request-101@external.com>",
-  "from_email": "client@external.com",
-  "from_name": "Client Name",
-  "to_email": "support@yourdomain.com",
-  "subject": "Help with account setup",
-  "text_body": "Hello support, I need help setting up my domain.",
-  "html_body": "<p>Hello support, I need help setting up my domain.</p>",
-  "headers_json": "{\"content-type\":\"text/html; charset=utf-8\",\"mime-version\":\"1.0\"}",
-  "attachments_json": "[]",
-  "raw_size": 1420,
-  "received_at": 1792427620392
-}
+curl -H "x-api-key: ar@51/er" http://localhost:3000/api/inbox/1774182900000
 ```
 
 #### `DELETE /api/inbox/:id`
-Delete an email from the inbound database.
+Delete a specific email from the local inbox.
 ```bash
-curl -X DELETE -H "x-api-key: mySecretPassword123" http://localhost:8080/api/inbox/1
+curl -X DELETE -H "x-api-key: ar@51/er" http://localhost:3000/api/inbox/1774182900000
 ```
+
+#### `POST /api/inbox/clear`
+Clear all local stored emails.
+```bash
+curl -X POST -H "x-api-key: ar@51/er" http://localhost:3000/api/inbox/clear
+```
+
 
 ---
 
@@ -359,8 +414,8 @@ Adds a sending/receiving domain, auto-generates a dedicated 2048-bit RSA DKIM ke
 ```
 
 ```bash
-curl -X POST http://localhost:8080/api/domains \
-  -H "x-api-key: mySecretPassword123" \
+curl -X POST http://localhost:3000/api/domains \
+  -H "x-api-key: ar@51/er" \
   -H "Content-Type: application/json" \
   -d '{"domain":"mybrand.com","selector":"default"}'
 ```
@@ -382,6 +437,11 @@ curl -X POST http://localhost:8080/api/domains \
       "host": "mybrand.com",
       "value": "v=spf1 ip4:YOUR_SERVER_IP ~all"
     },
+    "heloSpf": {
+      "type": "TXT",
+      "host": "mail.mybrand.com",
+      "value": "v=spf1 a -all"
+    },
     "dkim": {
       "type": "TXT",
       "host": "default._domainkey.mybrand.com",
@@ -390,13 +450,13 @@ curl -X POST http://localhost:8080/api/domains \
     "dmarc": {
       "type": "TXT",
       "host": "_dmarc.mybrand.com",
-      "value": "v=DMARC1; p=none; rua=mailto:dmarc@mybrand.com"
+      "value": "v=DMARC1; p=reject; sp=reject; pct=100; rua=mailto:dmarc@mybrand.com"
     },
     "mx": {
       "type": "MX",
       "host": "mybrand.com",
       "priority": 10,
-      "value": "mail.yourdomain.com."
+      "value": "mail.mybrand.com."
     }
   }
 }
@@ -405,25 +465,25 @@ curl -X POST http://localhost:8080/api/domains \
 #### `GET /api/domains`
 Lists all hosted domains and their live verification statuses.
 ```bash
-curl -H "x-api-key: mySecretPassword123" http://localhost:8080/api/domains
+curl -H "x-api-key: ar@51/er" http://localhost:3000/api/domains
 ```
 
 #### `GET /api/domains/:domain`
 Inspect a specific domain, its configuration, and public DKIM key.
 ```bash
-curl -H "x-api-key: mySecretPassword123" http://localhost:8080/api/domains/mybrand.com
+curl -H "x-api-key: ar@51/er" http://localhost:3000/api/domains/mybrand.com
 ```
 
 #### `POST /api/domains/:domain/verify`
 Runs live DNS queries against public nameservers to verify that your SPF, DKIM, DMARC, and MX records have propagated.
 ```bash
-curl -X POST -H "x-api-key: mySecretPassword123" http://localhost:8080/api/domains/mybrand.com/verify
+curl -X POST -H "x-api-key: ar@51/er" http://localhost:3000/api/domains/mybrand.com/verify
 ```
 
 #### `DELETE /api/domains/:domain`
 Deletes a hosted domain and removes its associated DKIM key.
 ```bash
-curl -X DELETE -H "x-api-key: mySecretPassword123" http://localhost:8080/api/domains/mybrand.com
+curl -X DELETE -H "x-api-key: ar@51/er" http://localhost:3000/api/domains/mybrand.com
 ```
 
 ---
@@ -433,8 +493,8 @@ curl -X DELETE -H "x-api-key: mySecretPassword123" http://localhost:8080/api/dom
 #### `POST /api/dkim/generate`
 Generates a standalone 2048-bit RSA DKIM keypair.
 ```bash
-curl -X POST http://localhost:8080/api/dkim/generate \
-  -H "x-api-key: mySecretPassword123" \
+curl -X POST http://localhost:3000/api/dkim/generate \
+  -H "x-api-key: ar@51/er" \
   -H "Content-Type: application/json" \
   -d '{"domain":"anotherdomain.com","selector":"default"}'
 ```
@@ -442,22 +502,22 @@ curl -X POST http://localhost:8080/api/dkim/generate \
 #### `GET /api/dkim`
 Lists all active DKIM keys stored in the database.
 ```bash
-curl -H "x-api-key: mySecretPassword123" http://localhost:8080/api/dkim
+curl -H "x-api-key: ar@51/er" http://localhost:3000/api/dkim
 ```
 
 #### `GET /api/deliverability/audit/:domain`
 Pre-flight audit that runs live DNS lookups on SPF, DKIM, DMARC, Reverse DNS (PTR), and outbound port 25 connectivity, returning a **0–100 Deliverability Score** and issues to fix.
 ```bash
-curl -H "x-api-key: mySecretPassword123" http://localhost:8080/api/deliverability/audit/mybrand.com
+curl -H "x-api-key: ar@51/er" http://localhost:3000/api/deliverability/audit/mybrand.com
 ```
 **Response:**
 ```json
 {
   "domain": "mybrand.com",
   "score": 100,
-  "spf": { "valid": true, "record": "v=spf1 ip4:198.51.100.1 ~all" },
+  "spf": { "valid": true, "record": "v=spf1 ip4:YOUR_IP ~all" },
   "dkim": { "valid": true, "selector": "default" },
-  "dmarc": { "valid": true, "record": "v=DMARC1; p=none;" },
+  "dmarc": { "valid": true, "record": "v=DMARC1; p=reject; sp=reject; pct=100;" },
   "ptr": { "valid": true, "hostname": "mail.mybrand.com" },
   "port25Outbound": { "open": true },
   "recommendations": []
@@ -474,14 +534,14 @@ Protects sender reputation by suppressing addresses that bounced permanently (55
 List suppressed emails with pagination.
 - Query Parameters: `limit` (default: 50), `offset` (default: 0), `reason` (`bounce`, `unsubscribe`, `manual`)
 ```bash
-curl -H "x-api-key: mySecretPassword123" http://localhost:8080/api/suppression
+curl -H "x-api-key: ar@51/er" http://localhost:3000/api/suppression
 ```
 
 #### `POST /api/suppression`
 Manually add an email to the suppression list.
 ```bash
-curl -X POST http://localhost:8080/api/suppression \
-  -H "x-api-key: mySecretPassword123" \
+curl -X POST http://localhost:3000/api/suppression \
+  -H "x-api-key: ar@51/er" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@bounced-address.com",
@@ -493,7 +553,7 @@ curl -X POST http://localhost:8080/api/suppression \
 #### `DELETE /api/suppression/:email`
 Unsuppress an email to allow sending again.
 ```bash
-curl -X DELETE -H "x-api-key: mySecretPassword123" http://localhost:8080/api/suppression/user@bounced-address.com
+curl -X DELETE -H "x-api-key: ar@51/er" http://localhost:3000/api/suppression/user@bounced-address.com
 ```
 
 ---
@@ -508,11 +568,13 @@ The server acts as an unrestricted, high-throughput delivery engine.
 
 ---
 
-## 🛡️ Best Practices for High Inbox Delivery (Zero Spam Folder)
+## 🛡️ Best Practices for High Inbox Delivery (Zero Spam Folder & 10/10 Score)
 
-1. **Static Cloud VPS with Port 25 Open**: Host on a VPS provider (e.g., OVH, Hetzner, Linode, Vultr) that permits outbound port 25 traffic.
-2. **Forward-Confirmed Reverse DNS (FCrDNS / PTR Record)**: Ensure your VPS provider sets the PTR record of your IP to match your server hostname (e.g., `mail.yourdomain.com`).
-3. **Publish SPF Record (TXT)**: `v=spf1 ip4:<YOUR_VPS_IP> ~all`
-4. **Publish DKIM Record (TXT)**: Use `POST /api/domains` to generate the 2048-bit key and publish to `default._domainkey.yourdomain.com`.
-5. **Publish DMARC Record (TXT)**: At `_dmarc.yourdomain.com`: `v=DMARC1; p=none; sp=none; rua=mailto:dmarc@yourdomain.com`.
-6. **Provide One-Click Unsubscribe**: Always pass `unsubscribeUrl` on marketing emails to comply with Google and Yahoo 2024+ sender mandates.
+1. **Static Cloud VPS with Port 25 Open**: Host on a VPS provider that permits outbound port 25 traffic.
+2. **Forward-Confirmed Reverse DNS (FCrDNS / PTR Record)**: Set the PTR record of your server IP to match your HELO hostname: `mail.yourdomain.com`.
+3. **Publish Domain SPF Record (TXT)**: At `yourdomain.com`: `v=spf1 ip4:<YOUR_VPS_IP> ~all`.
+4. **Publish HELO Hostname SPF Record (TXT)**: At `mail.yourdomain.com`: `v=spf1 a -all` *(Resolves "SPF: HELO does not publish an SPF Record")*.
+5. **Publish DKIM Record (TXT)**: At `default._domainkey.yourdomain.com` with the 2048-bit RSA public key.
+6. **Publish Strict DMARC Policy (TXT)**: At `_dmarc.yourdomain.com`: `v=DMARC1; p=reject; sp=reject; pct=100; rua=mailto:dmarc@yourdomain.com` *(Eliminates "DMARC policy is set to None" warnings)*.
+7. **HTML Semantics & Plain-Text Fallback**: Always ensure emails include a valid `<!DOCTYPE html>` wrapper and plain-text body (handled automatically by the server's Anti-Spam Shield).
+8. **Provide One-Click Unsubscribe**: Always pass `unsubscribeUrl` on marketing emails to comply with Google and Yahoo sender mandates.

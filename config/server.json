@@ -20,10 +20,11 @@
       3600
     ]
   },
-  "port": 8080,
-  "apiPassword": "mysecret123",
-  "inboundPort": 2525,
-  "concurrency": 20,
-  "heloHost": "mail.localmta.dev",
-  "updatedAt": "2026-10-20T11:25:55.473Z"
+  "port": 3000,
+  "apiPassword": "ar@51/er",
+  "inboundPort": 25,
+  "webhookUrl": null,
+  "concurrency": 25,
+  "heloHost": "mail.exauraa.com",
+  "updatedAt": "2026-10-20T12:27:32.713Z"
 }

@@ -1,17 +1,43 @@
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
+const https = require('https');
 const { SMTPServer } = require('smtp-server');
 const { simpleParser } = require('mailparser');
 
-// In-memory buffer of recent emails for inspection/debugging if inbound is enabled
-const recentInbox = [];
-const MAX_INBOX = 100;
-
 class InboundReceiver {
   constructor(options = {}) {
-    this.port = options.port || 2525;
+    this.port = options.port || parseInt(process.env.INBOUND_PORT || '25', 10);
     this.host = options.host || '0.0.0.0';
-    this.serverName = options.serverName || 'mail.localmta.dev';
+    this.serverName = options.serverName || options.heloHost || 'mail.localmta.dev';
     this.options = options;
     this.server = null;
+    this.webhookUrl = options.webhookUrl || process.env.WEBHOOK_URL || null;
+  }
+
+  static getStorageFile() {
+    const dataDir = path.join(__dirname, '..', 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    return path.join(dataDir, 'inbox.json');
+  }
+
+  static loadInbox() {
+    const file = this.getStorageFile();
+    if (!fs.existsSync(file)) return [];
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  static saveInbox(list) {
+    const file = this.getStorageFile();
+    // Keep last 1,000 received emails in persistent storage
+    const trimmed = list.slice(0, 1000);
+    fs.writeFileSync(file, JSON.stringify(trimmed, null, 2), 'utf8');
   }
 
   start() {
@@ -24,7 +50,7 @@ class InboundReceiver {
         hideSTARTTLS: !this.options.key,
         key: this.options.key,
         cert: this.options.cert,
-        size: 25 * 1024 * 1024, // 25MB max size
+        size: 30 * 1024 * 1024, // 30MB max size
 
         onConnect: (session, callback) => callback(),
 
@@ -35,9 +61,9 @@ class InboundReceiver {
           const hosted = DomainManager.listDomains();
 
           if (hosted.length > 0) {
-            const domain = address.address.split('@')[1].toLowerCase();
-            if (!DomainManager.isDomainHosted(domain)) {
-              return callback(new Error(`550 5.7.1 Domain ${domain} not hosted on this server`));
+            const domain = address.address.split('@')[1]?.toLowerCase();
+            if (domain && !DomainManager.isDomainHosted(domain)) {
+              return callback(new Error(`550 5.7.1 Relay access denied: domain ${domain} not hosted on this server`));
             }
           }
           callback();
@@ -57,8 +83,10 @@ class InboundReceiver {
               }));
 
               const headersObj = {};
-              for (const [key, val] of parsed.headers) {
-                headersObj[key] = val;
+              if (parsed.headers) {
+                for (const [key, val] of parsed.headers) {
+                  headersObj[key] = val;
+                }
               }
 
               const emailRecord = {
@@ -76,15 +104,22 @@ class InboundReceiver {
                 received_at: Date.now()
               };
 
-              recentInbox.unshift(emailRecord);
-              if (recentInbox.length > MAX_INBOX) {
-                recentInbox.pop();
+              // Persist email
+              const inbox = InboundReceiver.loadInbox();
+              inbox.unshift(emailRecord);
+              InboundReceiver.saveInbox(inbox);
+
+              console.log(`[InboundReceiver] 📥 Received email from ${emailRecord.from_email} to ${emailRecord.to_email}: "${emailRecord.subject}"`);
+
+              // Optional Webhook dispatch to centralized system
+              if (this.webhookUrl) {
+                this.forwardWebhook(emailRecord);
               }
 
               callback(null, 'OK: Message received');
             })
             .catch(err => {
-              console.error('[InboundReceiver] Error parsing email:', err);
+              console.error('[InboundReceiver] Error parsing incoming email:', err.message);
               callback(new Error('MIME parse error: ' + err.message));
             });
         }
@@ -120,21 +155,74 @@ class InboundReceiver {
     });
   }
 
-  static getInbox({ limit = 50, offset = 0 } = {}) {
-    return recentInbox.slice(offset, offset + limit);
+  forwardWebhook(emailRecord) {
+    try {
+      const url = new URL(this.webhookUrl);
+      const isHttps = url.protocol === 'https:';
+      const client = isHttps ? https : http;
+
+      const payload = JSON.stringify(emailRecord);
+      const req = client.request(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          'User-Agent': 'MailServer-Inbound-Relay/2.0'
+        },
+        timeout: 8000
+      });
+
+      req.on('error', (err) => {
+        console.warn(`[InboundReceiver] Webhook delivery failed: ${err.message}`);
+      });
+      req.write(payload);
+      req.end();
+    } catch (e) {
+      console.warn(`[InboundReceiver] Webhook error: ${e.message}`);
+    }
+  }
+
+  static getInbox({ limit = 50, offset = 0, to = null, from = null, query = null } = {}) {
+    let inbox = this.loadInbox();
+    if (to) {
+      const cleanTo = to.toLowerCase();
+      inbox = inbox.filter(e => (e.to_email || '').toLowerCase().includes(cleanTo));
+    }
+    if (from) {
+      const cleanFrom = from.toLowerCase();
+      inbox = inbox.filter(e => (e.from_email || '').toLowerCase().includes(cleanFrom));
+    }
+    if (query) {
+      const q = query.toLowerCase();
+      inbox = inbox.filter(e =>
+        (e.subject || '').toLowerCase().includes(q) ||
+        (e.text_body || '').toLowerCase().includes(q)
+      );
+    }
+    return inbox.slice(offset, offset + limit);
   }
 
   static getEmail(id) {
-    return recentInbox.find(e => e.id === id) || null;
+    const inbox = this.loadInbox();
+    const numId = typeof id === 'string' ? parseInt(id, 10) : id;
+    return inbox.find(e => e.id === numId) || null;
   }
 
   static deleteEmail(id) {
-    const idx = recentInbox.findIndex(e => e.id === id);
-    if (idx !== -1) {
-      recentInbox.splice(idx, 1);
+    const inbox = this.loadInbox();
+    const numId = typeof id === 'string' ? parseInt(id, 10) : id;
+    const initialLen = inbox.length;
+    const filtered = inbox.filter(e => e.id !== numId);
+    if (filtered.length !== initialLen) {
+      this.saveInbox(filtered);
       return true;
     }
     return false;
+  }
+
+  static clearInbox() {
+    this.saveInbox([]);
+    return true;
   }
 }
 
