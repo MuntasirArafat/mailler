@@ -69,7 +69,18 @@ fi
 # 3. Create persistent directories and configure environment
 mkdir -p data config
 
-# Parse CLI flags or interactive prompt
+# Check for existing .env file
+HAS_ENV_FILE=false
+if [ -f .env ]; then
+  HAS_ENV_FILE=true
+  echo -e "${GREEN}✔ Detected existing '.env' file.${NC}"
+  # Source .env safely
+  set -a
+  source .env 2>/dev/null || true
+  set +a
+fi
+
+# Parse CLI flags
 INPUT_PORT=""
 INPUT_PASS=""
 INPUT_WEBHOOK=""
@@ -94,88 +105,98 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo -e "\n${YELLOW}${BOLD}⚙️  Configure Mail Server & Inbound Webhook Settings:${NC}"
-
-# 1. Port
-if [ -z "$INPUT_PORT" ] && [ -n "$PORT" ]; then
-  INPUT_PORT="$PORT"
-fi
-if [ -z "$INPUT_PORT" ]; then
-  read -p "Select REST API Port [default: 3000]: " USER_PORT
-  API_PORT=${USER_PORT:-3000}
+if [ "$HAS_ENV_FILE" = true ] && [ -z "$INPUT_PORT" ] && [ -z "$INPUT_PASS" ] && [ -z "$INPUT_WEBHOOK" ]; then
+  # Use values from .env
+  API_PORT="${PORT:-3000}"
+  API_PASSWORD="${API_PASSWORD:-ar@51/er}"
+  WEBHOOK_URL="${WEBHOOK_URL:-}"
+  echo -e "${CYAN}→ Loaded configuration from .env:${NC}"
+  echo -e "   • API Port        : ${BOLD}${API_PORT}${NC}"
+  echo -e "   • API Password    : ${BOLD}${API_PASSWORD}${NC}"
+  echo -e "   • Inbound Webhook : ${BOLD}${WEBHOOK_URL:-None (captured to /api/inbox)}${NC}"
 else
-  API_PORT="$INPUT_PORT"
-fi
+  echo -e "\n${YELLOW}${BOLD}⚙️  Configure Mail Server & Inbound Webhook Settings:${NC}"
 
-# 2. Password
-if [ -z "$INPUT_PASS" ] && [ -n "$API_PASSWORD" ]; then
-  INPUT_PASS="$API_PASSWORD"
-fi
-if [ -z "$INPUT_PASS" ]; then
-  EXISTING_PASS=""
-  if [ -f config/server.json ]; then
-    EXISTING_PASS=$(node -e "try { console.log(require('./config/server.json').apiPassword || ''); } catch(e){}" 2>/dev/null || true)
-  fi
-  PROMPT_MSG="Enter Secret API Password"
-  if [ -n "$EXISTING_PASS" ]; then
-    PROMPT_MSG="Enter Secret API Password [press Enter to keep '${EXISTING_PASS}']"
+  # 1. Port
+  if [ -n "$INPUT_PORT" ]; then
+    API_PORT="$INPUT_PORT"
+  elif [ -n "$PORT" ]; then
+    API_PORT="$PORT"
   else
-    PROMPT_MSG="Enter Secret API Password [press Enter to auto-generate]"
+    read -p "Select REST API Port [default: 3000]: " USER_PORT
+    API_PORT=${USER_PORT:-3000}
   fi
-  read -p "${PROMPT_MSG}: " USER_PASS
-  if [ -n "$USER_PASS" ]; then
-    API_PASSWORD="$USER_PASS"
-  elif [ -n "$EXISTING_PASS" ]; then
-    API_PASSWORD="$EXISTING_PASS"
-  else
-    RAND_KEY=$(openssl rand -hex 16 2>/dev/null || date +%s%N | sha256sum | head -c 32)
-    API_PASSWORD="sec_${RAND_KEY}"
-  fi
-else
-  API_PASSWORD="$INPUT_PASS"
-fi
 
-# 3. Webhook Callback URL
-if [ -z "$INPUT_WEBHOOK" ] && [ -n "$WEBHOOK_URL" ]; then
-  INPUT_WEBHOOK="$WEBHOOK_URL"
-fi
-if [ -z "$INPUT_WEBHOOK" ]; then
-  EXISTING_WEBHOOK=""
-  if [ -f config/server.json ]; then
-    EXISTING_WEBHOOK=$(node -e "try { console.log(require('./config/server.json').webhookUrl || ''); } catch(e){}" 2>/dev/null || true)
-  fi
-  PROMPT_WEBHOOK="Enter Inbound Mail Webhook Callback URL (e.g. https://yourserver.com/api/inbound)"
-  if [ -n "$EXISTING_WEBHOOK" ]; then
-    PROMPT_WEBHOOK="${PROMPT_WEBHOOK} [press Enter to keep '${EXISTING_WEBHOOK}']"
+  # 2. Password
+  if [ -n "$INPUT_PASS" ]; then
+    API_PASSWORD="$INPUT_PASS"
+  elif [ -n "$API_PASSWORD" ]; then
+    API_PASSWORD="$API_PASSWORD"
   else
-    PROMPT_WEBHOOK="${PROMPT_WEBHOOK} [press Enter to skip]"
+    EXISTING_PASS=""
+    if [ -f config/server.json ]; then
+      EXISTING_PASS=$(node -e "try { console.log(require('./config/server.json').apiPassword || ''); } catch(e){}" 2>/dev/null || true)
+    fi
+    PROMPT_MSG="Enter Secret API Password"
+    if [ -n "$EXISTING_PASS" ]; then
+      PROMPT_MSG="Enter Secret API Password [press Enter to keep '${EXISTING_PASS}']"
+    else
+      PROMPT_MSG="Enter Secret API Password [press Enter to auto-generate]"
+    fi
+    read -p "${PROMPT_MSG}: " USER_PASS
+    if [ -n "$USER_PASS" ]; then
+      API_PASSWORD="$USER_PASS"
+    elif [ -n "$EXISTING_PASS" ]; then
+      API_PASSWORD="$EXISTING_PASS"
+    else
+      RAND_KEY=$(openssl rand -hex 16 2>/dev/null || date +%s%N | sha256sum | head -c 32)
+      API_PASSWORD="sec_${RAND_KEY}"
+    fi
   fi
-  read -p "${PROMPT_WEBHOOK}: " USER_WEBHOOK
-  if [ -n "$USER_WEBHOOK" ]; then
-    WEBHOOK_URL="$USER_WEBHOOK"
-  elif [ -n "$EXISTING_WEBHOOK" ]; then
-    WEBHOOK_URL="$EXISTING_WEBHOOK"
+
+  # 3. Webhook Callback URL
+  if [ -n "$INPUT_WEBHOOK" ]; then
+    WEBHOOK_URL="$INPUT_WEBHOOK"
+  elif [ -n "$WEBHOOK_URL" ]; then
+    WEBHOOK_URL="$WEBHOOK_URL"
   else
-    WEBHOOK_URL=""
+    EXISTING_WEBHOOK=""
+    if [ -f config/server.json ]; then
+      EXISTING_WEBHOOK=$(node -e "try { console.log(require('./config/server.json').webhookUrl || ''); } catch(e){}" 2>/dev/null || true)
+    fi
+    PROMPT_WEBHOOK="Enter Inbound Mail Webhook Callback URL (e.g. https://yourserver.com/api/inbound)"
+    if [ -n "$EXISTING_WEBHOOK" ]; then
+      PROMPT_WEBHOOK="${PROMPT_WEBHOOK} [press Enter to keep '${EXISTING_WEBHOOK}']"
+    else
+      PROMPT_WEBHOOK="${PROMPT_WEBHOOK} [press Enter to skip]"
+    fi
+    read -p "${PROMPT_WEBHOOK}: " USER_WEBHOOK
+    if [ -n "$USER_WEBHOOK" ]; then
+      WEBHOOK_URL="$USER_WEBHOOK"
+    elif [ -n "$EXISTING_WEBHOOK" ]; then
+      WEBHOOK_URL="$EXISTING_WEBHOOK"
+    else
+      WEBHOOK_URL=""
+    fi
   fi
-else
-  WEBHOOK_URL="$INPUT_WEBHOOK"
-fi
 
-echo -e "\n${GREEN}✔ Configured settings:${NC}"
-echo -e "   • API Port        : ${BOLD}${API_PORT}${NC}"
-echo -e "   • API Password    : ${BOLD}${API_PASSWORD}${NC}"
-echo -e "   • Inbound Webhook : ${BOLD}${WEBHOOK_URL:-None (saved to /api/inbox)}${NC}"
+  echo -e "\n${GREEN}✔ Configured settings:${NC}"
+  echo -e "   • API Port        : ${BOLD}${API_PORT}${NC}"
+  echo -e "   • API Password    : ${BOLD}${API_PASSWORD}${NC}"
+  echo -e "   • Inbound Webhook : ${BOLD}${WEBHOOK_URL:-None (saved to /api/inbox)}${NC}"
 
-# Write to .env for docker-compose
-cat << ENV_EOF > .env
+  # Write to .env for docker-compose
+  cat << ENV_EOF > .env
 PORT=${API_PORT}
 API_PASSWORD=${API_PASSWORD}
 WEBHOOK_URL=${WEBHOOK_URL}
 INBOUND_PORT=25
+HELO_HOST=mail.exauraa.com
+CONCURRENCY=25
 ENV_EOF
+fi
 
-# Update config/server.json
+# Sync with config/server.json
 node -e "
 const fs = require('fs');
 const file = 'config/server.json';

@@ -37,8 +37,31 @@ sudo bash deploy.sh
 ```
 
 ### Option B: Docker Container Installation (Recommended)
+
+You can configure your settings directly in `.env` (copy from `.env.example`):
+```bash
+cp .env.example .env
+nano .env
+```
+
+Your `.env` file looks like this:
+```env
+PORT=3000
+API_PASSWORD=ar@51/er
+WEBHOOK_URL=https://central.example.com/api/inbound
+HELO_HOST=mail.exauraa.com
+INBOUND_PORT=25
+```
+
+Then run the installer:
 ```bash
 sudo bash docker-deploy.sh
+```
+*(If `.env` is present, `docker-deploy.sh` automatically uses it without asking any interactive questions!)*
+
+Or start directly with Docker Compose:
+```bash
+docker compose up -d --build
 ```
 
 ### Interactive Setup Prompt Example:
