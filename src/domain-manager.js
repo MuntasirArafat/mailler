@@ -79,9 +79,15 @@ class DomainManager {
       },
       {
         type: 'TXT',
+        name: `mail.${cleanDomain}`,
+        value: 'v=spf1 a -all',
+        description: 'SPF authorizer for MTA HELO hostname (fixes SPF_HELO_NONE)'
+      },
+      {
+        type: 'TXT',
         name: `_dmarc.${cleanDomain}`,
-        value: `v=DMARC1; p=none; sp=none; rua=mailto:postmaster@${cleanDomain}`,
-        description: 'DMARC policy declaration'
+        value: `v=DMARC1; p=reject; sp=reject; pct=100; rua=mailto:postmaster@${cleanDomain}`,
+        description: 'DMARC policy declaration (rejects spoofed emails)'
       },
       {
         type: 'MX',

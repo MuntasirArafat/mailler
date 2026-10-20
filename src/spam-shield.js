@@ -24,7 +24,9 @@ class SpamShield {
    * - RFC 8058 One-Click List-Unsubscribe (Required by Google & Yahoo bulk sender policies)
    * - Fully-qualified Message-ID
    * - Valid RFC 2822 Date
-   * - DKIM signature (either passed dynamically by central controller or loaded from local config)
+   * - Proper HTML5 skeleton (clears HTML_MIME_NO_HTML_TAG)
+   * - Multipart/alternative text fallback (clears MIME_HTML_ONLY)
+   * - DKIM signature (either passed dynamically by central controller or loaded/auto-generated locally)
    */
   static prepareAntiSpamMessage(mailOptions) {
     let fromEmail = mailOptions.from ? mailOptions.from.trim() : '';
@@ -69,13 +71,46 @@ class SpamShield {
       headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
     }
 
+    // 1. Process HTML Content: Wrap in proper HTML5 tags if missing to fix SpamAssassin HTML_MIME_NO_HTML_TAG
+    let htmlContent = mailOptions.html || undefined;
+    let textContent = mailOptions.text || '';
+
+    if (htmlContent) {
+      const hasHtmlTag = /<html[\s>]/i.test(htmlContent);
+      const hasDoctype = /<!DOCTYPE\s+html/i.test(htmlContent);
+
+      if (!hasHtmlTag && !hasDoctype) {
+        htmlContent = `<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n  <title>${mailOptions.subject || 'Notification'}</title>\n</head>\n<body style="margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #222222; background-color: #ffffff;">\n  ${htmlContent}\n</body>\n</html>`;
+      }
+
+      // 2. Auto-generate plain-text fallback from HTML if text is omitted to fix SpamAssassin MIME_HTML_ONLY
+      if (!textContent) {
+        textContent = htmlContent
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<\/p>/gi, '\n\n')
+          .replace(/<\/h[1-6]>/gi, '\n\n')
+          .replace(/<\/tr>/gi, '\n')
+          .replace(/<\/li>/gi, '\n')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+      }
+    }
+
     // Build raw MIME message
     const transportConfig = {
       streamTransport: true,
       buffer: true
     };
 
-    // Attach DKIM: Support either dynamic DKIM from central controller or local config
+    // Attach DKIM: Support either dynamic DKIM from central controller or local config/auto-generated
     let dkimConfig = null;
     if (mailOptions.dkim && mailOptions.dkim.privateKey) {
       dkimConfig = {
@@ -89,7 +124,7 @@ class SpamShield {
       if (dkimRecord && (dkimRecord.privateKey || dkimRecord.private_key)) {
         dkimConfig = {
           domainName: dkimRecord.domain,
-          keySelector: dkimRecord.selector,
+          keySelector: dkimRecord.selector || 'default',
           privateKey: dkimRecord.privateKey || dkimRecord.private_key,
           cacheDir: false
         };
@@ -106,14 +141,15 @@ class SpamShield {
       from: formattedFrom,
       to: mailOptions.to,
       subject: mailOptions.subject,
-      text: mailOptions.text || '',
-      html: mailOptions.html || undefined,
+      text: textContent || undefined,
+      html: htmlContent || undefined,
       attachments: mailOptions.attachments || undefined,
       headers
     }).then(info => ({
       messageId,
       buffer: info.message,
       dkimSigned: !!dkimConfig,
+      dkimSelector: dkimConfig ? dkimConfig.keySelector : null,
       domain
     }));
   }

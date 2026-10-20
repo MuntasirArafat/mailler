@@ -235,6 +235,26 @@ function createApiServer(mta, options = {}) {
     }
   });
 
+  app.post('/api/dkim/set', (req, res) => {
+    try {
+      const { domain, selector, privateKey, publicKey } = req.body;
+      if (!domain || !privateKey) return res.status(400).json({ error: 'Both domain and privateKey are required' });
+
+      const dkim = dkimManager.setKey(domain, selector || 'default', privateKey, publicKey || '');
+      res.json({
+        success: true,
+        dkim: {
+          domain: dkim.domain,
+          selector: dkim.selector,
+          recordName: dkim.recordName,
+          txtValue: dkim.txtValue
+        }
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/dkim', (req, res) => {
     res.json(dkimManager.listKeys());
   });

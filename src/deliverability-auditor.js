@@ -108,12 +108,12 @@ class DeliverabilityAuditor {
         report.checks.dmarc.record = dmarc;
         score += 15;
       } else {
-        report.checks.dmarc.advice = `Add TXT record at ${dmarcHost}: "v=DMARC1; p=none; sp=none"`;
+        report.checks.dmarc.advice = `Add TXT record at ${dmarcHost}: "v=DMARC1; p=reject; sp=reject; pct=100; rua=mailto:postmaster@${cleanDomain}"`;
         report.recommendations.push({
           type: 'TXT',
           host: dmarcHost,
-          value: 'v=DMARC1; p=none; sp=none',
-          reason: 'DMARC prevents domain spoofing and aligns SPF/DKIM.'
+          value: `v=DMARC1; p=reject; sp=reject; pct=100; rua=mailto:postmaster@${cleanDomain}`,
+          reason: 'DMARC prevents domain spoofing and enforces strict alignment.'
         });
       }
     } catch (e) {
