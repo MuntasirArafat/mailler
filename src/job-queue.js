@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { jobsCollection } = require('./db');
+const SpamShield = require('./spam-shield');
 
 class JobQueue {
   constructor(mta, options = {}) {
@@ -243,18 +244,32 @@ class JobQueue {
     console.log(`[JobQueue] ⚡ Processing job ${job.jobId} (Attempt ${currentAttempt}/${job.maxRetries}) to ${job.recipient}`);
 
     try {
-      // Execute delivery via Direct MTA
-      const sendResult = await this.mta.send(job.payload);
+      const payload = job.payload || {};
+      const senderName = payload.name || payload.fromName || null;
+      let formattedFrom = (payload.from || '').trim();
+      if (senderName && !formattedFrom.includes('<')) {
+        formattedFrom = `"${senderName}" <${formattedFrom}>`;
+      }
+
+      // 1. Prepare MIME with DKIM signature, semantic HTML, and plain-text fallback
+      const prepared = await SpamShield.prepareAntiSpamMessage({
+        ...payload,
+        from: formattedFrom,
+        fromName: senderName
+      });
+
+      // 2. Deliver directly to MX host on Port 25
+      const sendResult = await this.mta.deliver(formattedFrom, payload.to, prepared.buffer);
       const durationMs = Date.now() - startTime;
 
-      // Mark Job Completed
+      // 3. Mark Job Completed
       await col.updateOne(
         { jobId: job.jobId },
         {
           $set: {
             status: 'completed',
             response: sendResult.response,
-            messageId: sendResult.messageId,
+            messageId: prepared.messageId,
             host: sendResult.host,
             durationMs,
             completedAt: new Date(),
