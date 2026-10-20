@@ -276,6 +276,48 @@ function createApiServer(mta, options = {}) {
     }
   });
 
+  // 6. DOMAIN MANAGEMENT (JSON-backed in config/domains.json)
+  const DomainManager = require('./domain-manager');
+
+  app.get('/api/domains', (req, res) => {
+    res.json(DomainManager.listDomains());
+  });
+
+  app.post('/api/domains', async (req, res) => {
+    try {
+      const { domain, selector, inboundEnabled, outboundEnabled } = req.body;
+      if (!domain) return res.status(400).json({ error: 'Domain is required' });
+
+      const result = await DomainManager.addDomain(domain, { selector, inboundEnabled, outboundEnabled });
+      res.status(201).json({
+        success: true,
+        ...result
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/domains/:domain', (req, res) => {
+    const domain = DomainManager.getDomain(req.params.domain);
+    if (!domain) return res.status(404).json({ error: 'Domain not found' });
+    res.json(domain);
+  });
+
+  app.post('/api/domains/:domain/verify', async (req, res) => {
+    try {
+      const result = await DomainManager.verifyDomain(req.params.domain);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/domains/:domain', (req, res) => {
+    const deleted = DomainManager.deleteDomain(req.params.domain);
+    res.json({ success: deleted });
+  });
+
   return app;
 }
 

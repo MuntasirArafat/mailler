@@ -372,7 +372,7 @@ async function main() {
           console.log(`  • ${colors.bold}${d.domain}${colors.reset} [DKIM selector: ${d.selector}] - ${verified}${colors.reset}`);
         }
       } else {
-        console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);
+        console.error(`${colors.red}✖ Error (${listRes.status}): ${listRes.data?.error || JSON.stringify(listRes.data || listRes.raw)}${colors.reset}`);
       }
       return;
     }
