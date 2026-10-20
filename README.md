@@ -654,3 +654,22 @@ The server acts as an unrestricted, high-throughput delivery engine.
 6. **Publish Strict DMARC Policy (TXT)**: At `_dmarc.yourdomain.com`: `v=DMARC1; p=reject; sp=reject; pct=100; rua=mailto:dmarc@yourdomain.com` *(Eliminates "DMARC policy is set to None" warnings)*.
 7. **HTML Semantics & Plain-Text Fallback**: Always ensure emails include a valid `<!DOCTYPE html>` wrapper and plain-text body (handled automatically by the server's Anti-Spam Shield).
 8. **Provide One-Click Unsubscribe**: Always pass `unsubscribeUrl` on marketing emails to comply with Google and Yahoo sender mandates.
+
+
+
+
+# Check server health and MongoDB connection
+mailsource status
+
+# View live outbound job queue
+mailsource queue
+
+# Retry any failed jobs
+mailsource retry
+
+# View incoming received emails stored in MongoDB
+mailsource inbox
+mailsource read <ID>
+
+# Send an email via the MongoDB queue
+mailsource send --to client@gmail.com --from noreply@exauraa.com --subject "Hello" --body "Welcome!"
