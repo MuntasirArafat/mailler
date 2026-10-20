@@ -218,7 +218,7 @@ class JobQueue {
         },
         {
           sort: { priority: -1, nextRetryAt: 1, createdAt: 1 },
-          new: true
+          returnDocument: 'after'
         }
       );
     } catch (e) {
