@@ -39,17 +39,10 @@ ${colors.bold}USAGE:${colors.reset}
 
 ${colors.bold}SEND COMMANDS:${colors.reset}
   mailsource send --to <email> --from <email> [--name "<name>"]
-                  --subject "<subj>" --body "<text>" [--html "<html>"] [--sync]
+                  --subject "<subj>" --body "<text>" [--html "<html>"]
 
-${colors.bold}INBOX & READING COMMANDS:${colors.reset}
-  mailsource inbox                 List received inbound emails
-  mailsource read <id>             View full content & attachments of an email
-  mailsource delete-mail <id>      Delete an inbound email
-
-${colors.bold}SYSTEM & QUEUE COMMANDS:${colors.reset}
-  mailsource status                Check server health, uptime, and queue stats
-  mailsource queue                 List recent outbound delivery jobs
-  mailsource retry                 Retry all failed delivery jobs
+${colors.bold}SYSTEM & DIAGNOSTICS:${colors.reset}
+  mailsource status                Check server health, role, and uptime
 
 ${colors.bold}DOMAIN & ANTI-SPAM COMMANDS:${colors.reset}
   mailsource domains               List all hosted sending/receiving domains
@@ -186,18 +179,24 @@ async function main() {
         formattedFrom = `"${name}" <${formattedFrom}>`;
       }
 
-      console.log(`${colors.cyan}▶ Sending email from ${colors.bold}${formattedFrom}${colors.reset} to ${colors.bold}${to}${colors.reset}...`);
+      console.log(`${colors.cyan}▶ Delivering email from ${colors.bold}${formattedFrom}${colors.reset} to ${colors.bold}${to}${colors.reset} via Direct MTA...`);
       
-      const payload = { from: formattedFrom, name, to, subject, text: body, html: html || `<p>${body}</p>`, sync: !!sync };
+      const payload = { from: formattedFrom, name, to, subject, text: body, html: html || `<p>${body}</p>` };
       const res = await apiRequest('POST', '/send', payload);
 
-      if (res.status === 200 || res.status === 202) {
-        console.log(`\n${colors.green}${colors.bold}✔ SUCCESS! Email accepted by mail engine.${colors.reset}`);
-        if (res.data.jobId) {
-          console.log(`  • Job ID : ${colors.cyan}${res.data.jobId}${colors.reset}`);
-          console.log(`  • Status : ${colors.yellow}Enqueued for direct MX delivery${colors.reset}`);
-        } else if (res.data.response) {
-          console.log(`  • Direct MX Response: ${colors.green}${res.data.response}${colors.reset}`);
+      if (res.status === 200) {
+        console.log(`\n${colors.green}${colors.bold}✔ SUCCESS! Email delivered directly to destination MX.${colors.reset}`);
+        if (res.data.messageId) {
+          console.log(`  • Message ID   : ${colors.cyan}${res.data.messageId}${colors.reset}`);
+        }
+        if (res.data.host) {
+          console.log(`  • Destination  : ${colors.yellow}${res.data.host}${colors.reset}`);
+        }
+        if (res.data.response) {
+          console.log(`  • MX Response  : ${colors.green}${res.data.response}${colors.reset}`);
+        }
+        if (res.data.durationMs) {
+          console.log(`  • Delivery Time: ${colors.dim}${res.data.durationMs}ms${colors.reset}`);
         }
       } else {
         console.error(`\n${colors.red}✖ Failed (${res.status}): ${res.data.error || JSON.stringify(res.data)}${colors.reset}`);
@@ -211,18 +210,13 @@ async function main() {
       const res = await apiRequest('GET', '/health');
       if (res.status === 200) {
         const d = res.data;
-        console.log(`\n${colors.cyan}${colors.bold}🚀 Mail Server Status & Performance:${colors.reset}`);
+        console.log(`\n${colors.cyan}${colors.bold}🚀 Mail Server Status (Stateless Sender Node):${colors.reset}`);
         console.log(`  • Server State : ${colors.green}${colors.bold}● ${d.status.toUpperCase()}${colors.reset}`);
+        console.log(`  • Role         : ${colors.cyan}${d.role || 'stateless-mta-worker'}${colors.reset}`);
+        console.log(`  • HELO Host    : ${colors.yellow}${d.heloHost || 'default'}${colors.reset}`);
         console.log(`  • Uptime       : ${(d.uptime / 60).toFixed(1)} minutes`);
         console.log(`  • Memory RSS   : ${(d.memory.rss / (1024 * 1024)).toFixed(1)} MB`);
-        console.log(`\n${colors.bold}📊 Outbound Queue:${colors.reset}`);
-        console.log(`  • Pending      : ${colors.yellow}${d.queue.pending || 0}${colors.reset}`);
-        console.log(`  • In Progress  : ${colors.cyan}${d.queue.processing || d.queue.delivering || 0}${colors.reset}`);
-        if (d.queue.retrying) {
-          console.log(`  • Retrying     : ${colors.yellow}${d.queue.retrying}${colors.reset}`);
-        }
-        console.log(`  • Completed    : ${colors.green}${d.queue.completed || 0}${colors.reset}`);
-        console.log(`  • Failed       : ${colors.red}${d.queue.failed || 0}${colors.reset}`);
+        console.log(`  • Architecture : ${colors.green}Stateless (Controlled Centrally - No SQLite/Queues)${colors.reset}`);
       } else {
         console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);
       }
@@ -385,40 +379,15 @@ async function main() {
 
     // 6. QUEUE COMMAND
     if (command === 'queue' || command === 'jobs') {
-      const res = await apiRequest('GET', '/jobs?limit=15');
-      if (res.status === 200) {
-        console.log(`\n${colors.cyan}${colors.bold}📦 Recent Outbound Delivery Jobs:${colors.reset}\n`);
-        if (res.data.length === 0) {
-          console.log(`  ${colors.dim}(Queue is empty)${colors.reset}`);
-          return;
-        }
-        for (const j of res.data) {
-          let statusColor = colors.yellow;
-          if (j.status === 'completed') statusColor = colors.green;
-          if (j.status === 'failed') statusColor = colors.red;
-          if (j.status === 'retrying') statusColor = colors.yellow;
-          console.log(`  [${statusColor}${j.status.toUpperCase()}${colors.reset}] ${j.to_email} (from: ${j.from_email}) - Attempts: ${j.attempts}`);
-          if (j.delivery_response) {
-            console.log(`     └─ Response: ${colors.green}${j.delivery_response}${colors.reset}`);
-          }
-          if (j.last_error) {
-            console.log(`     └─ Error: ${colors.red}${j.last_error}${colors.reset}`);
-          }
-        }
-      } else {
-        console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);
-      }
+      console.log(`\n${colors.cyan}Notice:${colors.reset} Local SQLite job queues have been removed.`);
+      console.log(`This VPS operates as a ${colors.green}stateless direct MTA sender node${colors.reset}.`);
+      console.log(`All job scheduling, queues, and retries are managed by your centralized control system.`);
       return;
     }
 
     // 7. RETRY FAILED JOBS
     if (command === 'retry' || command === 'retry-failed') {
-      const res = await apiRequest('POST', '/jobs/retry-failed');
-      if (res.status === 200) {
-        console.log(`${colors.green}✔ Retried ${res.data.retriedCount} failed jobs.${colors.reset}`);
-      } else {
-        console.error(`${colors.red}✖ Error: ${JSON.stringify(res.data)}${colors.reset}`);
-      }
+      console.log(`\n${colors.cyan}Notice:${colors.reset} Retries and job dispatch are managed centrally by your main server.`);
       return;
     }
 

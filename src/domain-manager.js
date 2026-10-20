@@ -1,8 +1,32 @@
-const db = require('./db');
+const fs = require('fs');
+const path = require('path');
 const SpamShield = require('./spam-shield');
 const DeliverabilityAuditor = require('./deliverability-auditor');
 
 class DomainManager {
+  static getConfigFile() {
+    const configDir = path.join(__dirname, '..', 'config');
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+    return path.join(configDir, 'domains.json');
+  }
+
+  static loadDomains() {
+    const file = this.getConfigFile();
+    if (!fs.existsSync(file)) return {};
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (e) {
+      return {};
+    }
+  }
+
+  static saveDomains(domains) {
+    const file = this.getConfigFile();
+    fs.writeFileSync(file, JSON.stringify(domains, null, 2), 'utf8');
+  }
+
   /**
    * Add a new domain to the mail server.
    * Automatically generates DKIM RSA-2048 keys and formats DNS records.
@@ -18,25 +42,26 @@ class DomainManager {
       dkim = {
         domain: cleanDomain,
         selector,
-        recordName: existingDkim.txt_record_name,
-        txtValue: existingDkim.txt_record_value
+        recordName: existingDkim.recordName || existingDkim.txt_record_name,
+        txtValue: existingDkim.txtValue || existingDkim.txt_record_value
       };
     } else {
       dkim = SpamShield.generateDkim(cleanDomain, selector);
     }
 
     // 2. Insert or update hosted domain
-    const stmt = db.prepare(`
-      INSERT INTO hosted_domains (domain, selector, is_verified, inbound_enabled, outbound_enabled, created_at)
-      VALUES (?, ?, 0, ?, ?, ?)
-      ON CONFLICT(domain) DO UPDATE SET
-        selector = excluded.selector,
-        inbound_enabled = excluded.inbound_enabled,
-        outbound_enabled = excluded.outbound_enabled
-    `);
-    stmt.run(cleanDomain, selector, inboundEnabled ? 1 : 0, outboundEnabled ? 1 : 0, Date.now());
+    const domains = this.loadDomains();
+    domains[cleanDomain] = {
+      domain: cleanDomain,
+      selector,
+      is_verified: domains[cleanDomain] ? domains[cleanDomain].is_verified : 0,
+      inbound_enabled: inboundEnabled ? 1 : 0,
+      outbound_enabled: outboundEnabled ? 1 : 0,
+      created_at: domains[cleanDomain] ? domains[cleanDomain].created_at : Date.now()
+    };
+    this.saveDomains(domains);
 
-    // 4. Fetch Public IP for SPF guidance
+    // 3. Fetch Public IP for SPF guidance
     const publicIp = await DeliverabilityAuditor.getPublicIp();
 
     const dnsRecords = [
@@ -70,7 +95,7 @@ class DomainManager {
     return {
       domain: cleanDomain,
       selector,
-      isVerified: false,
+      isVerified: !!domains[cleanDomain].is_verified,
       inboundEnabled: !!inboundEnabled,
       outboundEnabled: !!outboundEnabled,
       dnsRecords
@@ -78,38 +103,40 @@ class DomainManager {
   }
 
   static listDomains() {
-    return db.prepare('SELECT domain, selector, is_verified, inbound_enabled, outbound_enabled, created_at FROM hosted_domains ORDER BY created_at DESC').all();
+    const domains = this.loadDomains();
+    return Object.values(domains).sort((a, b) => b.created_at - a.created_at);
   }
 
   static getDomain(domain) {
     const cleanDomain = domain.toLowerCase().trim();
-    const row = db.prepare('SELECT * FROM hosted_domains WHERE domain = ?').get(cleanDomain);
-    if (!row) return null;
+    const domains = this.loadDomains();
+    const item = domains[cleanDomain];
+    if (!item) return null;
 
     const dkim = SpamShield.getDkim(cleanDomain);
     return {
-      ...row,
+      ...item,
       dkim: dkim ? {
         selector: dkim.selector,
-        recordName: dkim.txt_record_name,
-        txtValue: dkim.txt_record_value
+        recordName: dkim.recordName || dkim.txt_record_name,
+        txtValue: dkim.txtValue || dkim.txt_record_value
       } : null
     };
   }
 
   static async verifyDomain(domain) {
     const cleanDomain = domain.toLowerCase().trim();
-    const row = this.getDomain(cleanDomain);
-    if (!row) throw new Error(`Domain "${cleanDomain}" is not added to this mail server.`);
+    const item = this.getDomain(cleanDomain);
+    if (!item) throw new Error(`Domain "${cleanDomain}" is not added to this mail server.`);
 
-    const audit = await DeliverabilityAuditor.auditDomain(cleanDomain, row.selector);
+    const audit = await DeliverabilityAuditor.auditDomain(cleanDomain, item.selector);
 
     // If both SPF and DKIM pass, mark domain as verified
     const isVerified = audit.checks.spf.passed && audit.checks.dkim.passed;
-    if (isVerified) {
-      db.prepare('UPDATE hosted_domains SET is_verified = 1 WHERE domain = ?').run(cleanDomain);
-    } else {
-      db.prepare('UPDATE hosted_domains SET is_verified = 0 WHERE domain = ?').run(cleanDomain);
+    const domains = this.loadDomains();
+    if (domains[cleanDomain]) {
+      domains[cleanDomain].is_verified = isVerified ? 1 : 0;
+      this.saveDomains(domains);
     }
 
     return {
@@ -128,16 +155,23 @@ class DomainManager {
 
   static deleteDomain(domain) {
     const cleanDomain = domain.toLowerCase().trim();
-    db.prepare('DELETE FROM hosted_domains WHERE domain = ?').run(cleanDomain);
-    db.prepare('DELETE FROM dkim_keys WHERE domain = ?').run(cleanDomain);
-    return true;
+    const domains = this.loadDomains();
+    if (domains[cleanDomain]) {
+      delete domains[cleanDomain];
+      this.saveDomains(domains);
+      const dkimManager = require('./dkim-manager');
+      dkimManager.deleteKey(cleanDomain);
+      return true;
+    }
+    return false;
   }
 
   static isDomainHosted(domain) {
     if (!domain) return false;
     const cleanDomain = domain.toLowerCase().trim();
-    const row = db.prepare('SELECT inbound_enabled FROM hosted_domains WHERE domain = ?').get(cleanDomain);
-    return row ? !!row.inbound_enabled : false;
+    const domains = this.loadDomains();
+    const item = domains[cleanDomain];
+    return item ? !!item.inbound_enabled : false;
   }
 }
 

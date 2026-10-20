@@ -1,59 +1,21 @@
 const crypto = require('crypto');
-const db = require('./db');
 const nodemailer = require('nodemailer');
+const dkimManager = require('./dkim-manager');
 
 class SpamShield {
   /**
-   * Generate 2048-bit RSA keypair for DKIM.
+   * Generate 2048-bit RSA keypair for DKIM (saved to JSON file config/dkim-keys.json).
    */
   static generateDkim(domain, selector = 'default') {
-    const cleanDomain = domain.toLowerCase().trim();
-    const cleanSelector = selector.toLowerCase().trim();
-
-    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
-      modulusLength: 2048,
-      publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-    });
-
-    const pubBase64 = publicKey
-      .replace(/-----BEGIN PUBLIC KEY-----/g, '')
-      .replace(/-----END PUBLIC KEY-----/g, '')
-      .replace(/[\r\n\s]/g, '');
-
-    const recordName = `${cleanSelector}._domainkey.${cleanDomain}`;
-    const txtValue = `v=DKIM1; k=rsa; p=${pubBase64}`;
-
-    const stmt = db.prepare(`
-      INSERT INTO dkim_keys (domain, selector, private_key, public_key, txt_record_name, txt_record_value, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(domain) DO UPDATE SET
-        selector = excluded.selector,
-        private_key = excluded.private_key,
-        public_key = excluded.public_key,
-        txt_record_name = excluded.txt_record_name,
-        txt_record_value = excluded.txt_record_value,
-        created_at = excluded.created_at
-    `);
-
-    stmt.run(cleanDomain, cleanSelector, privateKey, publicKey, recordName, txtValue, Date.now());
-
-    return {
-      domain: cleanDomain,
-      selector: cleanSelector,
-      recordName,
-      txtValue
-    };
+    return dkimManager.generateKey(domain, selector);
   }
 
   static getDkim(domain) {
-    const cleanDomain = domain.toLowerCase().trim();
-    const stmt = db.prepare('SELECT * FROM dkim_keys WHERE domain = ?');
-    return stmt.get(cleanDomain) || null;
+    return dkimManager.getKey(domain);
   }
 
   static listDkim() {
-    return db.prepare('SELECT domain, selector, txt_record_name, txt_record_value, created_at FROM dkim_keys').all();
+    return dkimManager.listKeys();
   }
 
   /**
@@ -62,6 +24,7 @@ class SpamShield {
    * - RFC 8058 One-Click List-Unsubscribe (Required by Google & Yahoo bulk sender policies)
    * - Fully-qualified Message-ID
    * - Valid RFC 2822 Date
+   * - DKIM signature (either passed dynamically by central controller or loaded from local config)
    */
   static prepareAntiSpamMessage(mailOptions) {
     let fromEmail = mailOptions.from ? mailOptions.from.trim() : '';
@@ -112,15 +75,29 @@ class SpamShield {
       buffer: true
     };
 
-    // Attach DKIM if key exists for sending domain
-    const dkimRecord = this.getDkim(domain);
-    if (dkimRecord) {
-      transportConfig.dkim = {
-        domainName: dkimRecord.domain,
-        keySelector: dkimRecord.selector,
-        privateKey: dkimRecord.private_key,
+    // Attach DKIM: Support either dynamic DKIM from central controller or local config
+    let dkimConfig = null;
+    if (mailOptions.dkim && mailOptions.dkim.privateKey) {
+      dkimConfig = {
+        domainName: mailOptions.dkim.domainName || mailOptions.dkim.domain || domain,
+        keySelector: mailOptions.dkim.keySelector || mailOptions.dkim.selector || 'default',
+        privateKey: mailOptions.dkim.privateKey,
         cacheDir: false
       };
+    } else {
+      const dkimRecord = this.getDkim(domain);
+      if (dkimRecord && (dkimRecord.privateKey || dkimRecord.private_key)) {
+        dkimConfig = {
+          domainName: dkimRecord.domain,
+          keySelector: dkimRecord.selector,
+          privateKey: dkimRecord.privateKey || dkimRecord.private_key,
+          cacheDir: false
+        };
+      }
+    }
+
+    if (dkimConfig) {
+      transportConfig.dkim = dkimConfig;
     }
 
     const mailer = nodemailer.createTransport(transportConfig);
@@ -136,7 +113,7 @@ class SpamShield {
     }).then(info => ({
       messageId,
       buffer: info.message,
-      dkimSigned: !!dkimRecord,
+      dkimSigned: !!dkimConfig,
       domain
     }));
   }

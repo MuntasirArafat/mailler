@@ -1,10 +1,11 @@
 const path = require('path');
 const express = require('express');
 const SpamShield = require('./spam-shield');
-const InboundReceiver = require('./inbound-receiver');
 const DeliverabilityAuditor = require('./deliverability-auditor');
+const DnsChecker = require('./dns-checker');
+const dkimManager = require('./dkim-manager');
 
-function createApiServer(jobQueue, inboundReceiver, options = {}) {
+function createApiServer(mta, options = {}) {
   const app = express();
   const apiPassword = options.apiPassword || process.env.API_PASSWORD || process.env.API_KEY || null;
 
@@ -45,17 +46,32 @@ function createApiServer(jobQueue, inboundReceiver, options = {}) {
   app.get('/api/health', (req, res) => {
     res.json({
       status: 'healthy',
-      authRequired: !!apiPassword,
+      role: 'stateless-mta-worker',
       uptime: process.uptime(),
       memory: process.memoryUsage(),
-      queue: jobQueue.getStats()
+      heloHost: mta.heloHost || null,
+      authRequired: !!apiPassword
     });
   });
 
-  // 1. OUTBOUND: SINGLE SEND
+  // 1. OUTBOUND: DIRECT SINGLE EMAIL SEND
   app.post('/api/send', async (req, res) => {
     try {
-      const { from, to, name, fromName, subject, text, html, unsubscribeUrl, unsubscribeEmail, sync, headers } = req.body;
+      const {
+        from,
+        to,
+        name,
+        fromName,
+        subject,
+        text,
+        html,
+        attachments,
+        unsubscribeUrl,
+        unsubscribeEmail,
+        headers,
+        dkim
+      } = req.body;
+
       if (!from || !to) {
         return res.status(400).json({ error: 'Both "from" and "to" email addresses are required.' });
       }
@@ -66,123 +82,145 @@ function createApiServer(jobQueue, inboundReceiver, options = {}) {
         formattedFrom = `"${senderName}" <${formattedFrom}>`;
       }
 
-      if (sync) {
-        // Direct synchronous delivery without queueing
-        const prepared = await SpamShield.prepareAntiSpamMessage({
-          from: formattedFrom,
-          fromName: senderName,
-          to,
-          subject,
-          text,
-          html,
-          unsubscribeUrl,
-          unsubscribeEmail,
-          headers
-        });
-        const delivery = await jobQueue.mta.deliver(formattedFrom, to, prepared.buffer);
-        return res.json({
-          success: true,
-          sync: true,
-          messageId: prepared.messageId,
-          dkimSigned: prepared.dkimSigned,
-          response: delivery.response
-        });
-      }
-
-      // Enqueue into high-capacity job queue
-      const job = jobQueue.enqueue({
+      const startTime = Date.now();
+      const prepared = await SpamShield.prepareAntiSpamMessage({
         from: formattedFrom,
         fromName: senderName,
         to,
         subject,
         text,
         html,
+        attachments,
         unsubscribeUrl,
         unsubscribeEmail,
-        headers
+        headers,
+        dkim
       });
 
-      res.status(202).json({
+      const delivery = await mta.deliver(formattedFrom, to, prepared.buffer);
+      const durationMs = Date.now() - startTime;
+
+      return res.json({
         success: true,
-        queued: true,
-        jobId: job.jobId
+        messageId: prepared.messageId,
+        dkimSigned: prepared.dkimSigned,
+        recipient: to,
+        durationMs,
+        response: delivery.response,
+        host: delivery.host,
+        tls: delivery.tls
       });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      return res.status(502).json({
+        success: false,
+        error: err.message,
+        recipient: req.body.to || null
+      });
     }
   });
 
-  // 2. OUTBOUND: HIGH-THROUGHPUT BULK BATCH ENQUEUE (Handles thousands/millions)
-  app.post('/api/jobs/batch', (req, res) => {
+  // 2. OUTBOUND: DIRECT CONCURRENT BATCH SEND (Stateless parallel delivery)
+  app.post(['/api/send-batch', '/api/send/batch'], async (req, res) => {
     try {
       const emails = req.body.emails;
       if (!Array.isArray(emails) || emails.length === 0) {
         return res.status(400).json({ error: '"emails" must be a non-empty array of email objects.' });
       }
 
-      const result = jobQueue.enqueueBatch(emails);
-      res.status(202).json({
+      const concurrency = Math.min(Math.max(parseInt(req.body.concurrency || '10', 10), 1), 50);
+      const results = new Array(emails.length);
+      let nextIndex = 0;
+
+      async function worker() {
+        while (nextIndex < emails.length) {
+          const currentIndex = nextIndex++;
+          const email = emails[currentIndex];
+          try {
+            if (!email.from || !email.to) {
+              results[currentIndex] = { to: email.to || null, success: false, error: 'Missing "from" or "to"' };
+              continue;
+            }
+
+            const senderName = email.fromName || email.name || null;
+            let formattedFrom = email.from.trim();
+            if (senderName && !formattedFrom.includes('<')) {
+              formattedFrom = `"${senderName}" <${formattedFrom}>`;
+            }
+
+            const prepared = await SpamShield.prepareAntiSpamMessage({
+              from: formattedFrom,
+              fromName: senderName,
+              to: email.to,
+              subject: email.subject,
+              text: email.text,
+              html: email.html,
+              attachments: email.attachments,
+              unsubscribeUrl: email.unsubscribeUrl,
+              unsubscribeEmail: email.unsubscribeEmail,
+              headers: email.headers,
+              dkim: email.dkim
+            });
+
+            const delivery = await mta.deliver(formattedFrom, email.to, prepared.buffer);
+            results[currentIndex] = {
+              to: email.to,
+              success: true,
+              messageId: prepared.messageId,
+              dkimSigned: prepared.dkimSigned,
+              host: delivery.host,
+              response: delivery.response
+            };
+          } catch (err) {
+            results[currentIndex] = {
+              to: email.to || null,
+              success: false,
+              error: err.message
+            };
+          }
+        }
+      }
+
+      const workers = [];
+      const workerCount = Math.min(concurrency, emails.length);
+      for (let i = 0; i < workerCount; i++) {
+        workers.push(worker());
+      }
+      await Promise.all(workers);
+
+      const sent = results.filter(r => r.success).length;
+      const failed = results.length - sent;
+
+      return res.json({
         success: true,
-        enqueued: result.enqueued,
-        jobs: result.jobs
+        total: emails.length,
+        sent,
+        failed,
+        results
       });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: err.message });
     }
   });
 
-  // 3. JOB QUEUE STATS & INSPECTION
-  app.get('/api/jobs/stats', (req, res) => {
-    res.json(jobQueue.getStats());
+  // 3. NETWORK DIAGNOSTICS: TEST PORT 25
+  app.post('/api/test-port25', async (req, res) => {
+    try {
+      const host = (req.body.host || 'gmail-smtp-in.l.google.com').trim();
+      const port = parseInt(req.body.port || '25', 10);
+      const result = await DnsChecker.testPort25(host, port);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.get('/api/jobs', (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit || '50', 10), 500);
-    const offset = parseInt(req.query.offset || '0', 10);
-    const status = req.query.status || null;
-
-    res.json(jobQueue.getRecentJobs(limit, offset, status));
-  });
-
-  app.get('/api/jobs/:id', (req, res) => {
-    const job = jobQueue.getJob(req.params.id);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    res.json(job);
-  });
-
-  app.post('/api/jobs/retry-failed', (req, res) => {
-    const count = jobQueue.retryFailed();
-    res.json({ success: true, retriedCount: count });
-  });
-
-  // 4. INBOUND MAIL (READING EMAILS)
-  app.get('/api/inbox', (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
-    const offset = parseInt(req.query.offset || '0', 10);
-    const { to, from, query } = req.query;
-
-    const emails = InboundReceiver.getInbox({ limit, offset, to, from, query });
-    res.json(emails);
-  });
-
-  app.get('/api/inbox/:id', (req, res) => {
-    const email = InboundReceiver.getEmail(parseInt(req.params.id, 10));
-    if (!email) return res.status(404).json({ error: 'Email not found' });
-    res.json(email);
-  });
-
-  app.delete('/api/inbox/:id', (req, res) => {
-    const deleted = InboundReceiver.deleteEmail(parseInt(req.params.id, 10));
-    res.json({ success: deleted });
-  });
-
-  // 5. ANTI-SPAM & DKIM MANAGEMENT
+  // 4. DKIM MANAGEMENT (JSON-backed in config/dkim-keys.json)
   app.post('/api/dkim/generate', (req, res) => {
     try {
       const { domain, selector } = req.body;
       if (!domain) return res.status(400).json({ error: 'Domain is required' });
 
-      const dkim = SpamShield.generateDkim(domain, selector || 'default');
+      const dkim = dkimManager.generateKey(domain, selector || 'default');
       res.json({
         success: true,
         dkim,
@@ -198,10 +236,16 @@ function createApiServer(jobQueue, inboundReceiver, options = {}) {
   });
 
   app.get('/api/dkim', (req, res) => {
-    res.json(SpamShield.listDkim());
+    res.json(dkimManager.listKeys());
   });
 
-  // 6. PRE-FLIGHT DELIVERABILITY & ANTI-SPAM AUDIT
+  app.delete('/api/dkim/:domain', (req, res) => {
+    const selector = req.query.selector || 'default';
+    const deleted = dkimManager.deleteKey(req.params.domain, selector);
+    res.json({ success: deleted });
+  });
+
+  // 5. PRE-FLIGHT DELIVERABILITY & ANTI-SPAM AUDIT
   app.get('/api/deliverability/audit/:domain', async (req, res) => {
     try {
       const selector = req.query.selector || 'default';
@@ -210,76 +254,6 @@ function createApiServer(jobQueue, inboundReceiver, options = {}) {
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
-  });
-
-  // 7. SUPPRESSION LIST MANAGEMENT
-  const SuppressionManager = require('./suppression');
-  app.get('/api/suppression', (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit || '50', 10), 500);
-    const offset = parseInt(req.query.offset || '0', 10);
-    const reason = req.query.reason || null;
-    res.json({
-      total: SuppressionManager.count(),
-      items: SuppressionManager.list({ limit, offset, reason })
-    });
-  });
-
-  app.post('/api/suppression', (req, res) => {
-    try {
-      const { email, reason, details } = req.body;
-      if (!email) return res.status(400).json({ error: 'Email is required' });
-      const item = SuppressionManager.add(email, reason || 'manual', details);
-      res.json({ success: true, item });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.delete('/api/suppression/:email', (req, res) => {
-    const deleted = SuppressionManager.remove(req.params.email);
-    res.json({ success: deleted });
-  });
-
-
-  // 9. DOMAIN MANAGEMENT (ADD, LIST, VERIFY, DELETE)
-  const DomainManager = require('./domain-manager');
-  app.post('/api/domains', async (req, res) => {
-    try {
-      const { domain, selector, inboundEnabled, outboundEnabled } = req.body;
-      if (!domain) return res.status(400).json({ error: 'Domain is required' });
-
-      const result = await DomainManager.addDomain(domain, { selector, inboundEnabled, outboundEnabled });
-      res.status(201).json({
-        success: true,
-        ...result
-      });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get('/api/domains', (req, res) => {
-    res.json(DomainManager.listDomains());
-  });
-
-  app.get('/api/domains/:domain', (req, res) => {
-    const domain = DomainManager.getDomain(req.params.domain);
-    if (!domain) return res.status(404).json({ error: 'Domain not found' });
-    res.json(domain);
-  });
-
-  app.post('/api/domains/:domain/verify', async (req, res) => {
-    try {
-      const result = await DomainManager.verifyDomain(req.params.domain);
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.delete('/api/domains/:domain', (req, res) => {
-    const deleted = DomainManager.deleteDomain(req.params.domain);
-    res.json({ success: deleted });
   });
 
   return app;

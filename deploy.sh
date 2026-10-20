@@ -97,7 +97,7 @@ elif command -v yum &> /dev/null; then
   yum install -y curl git gcc-c++ make openssl
 fi
 
-# Check Node.js version (Requires Node.js 20 or 22 LTS for built-in SQLite & Direct Sockets)
+# Check Node.js version (Requires Node.js 18+ or 20/22 LTS for Direct Sockets)
 NODE_INSTALLED=false
 if command -v node &> /dev/null; then
   NODE_VER=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)

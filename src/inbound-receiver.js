@@ -1,22 +1,17 @@
 const { SMTPServer } = require('smtp-server');
 const { simpleParser } = require('mailparser');
-const db = require('./db');
+
+// In-memory buffer of recent emails for inspection/debugging if inbound is enabled
+const recentInbox = [];
+const MAX_INBOX = 100;
 
 class InboundReceiver {
   constructor(options = {}) {
     this.port = options.port || 2525;
     this.host = options.host || '0.0.0.0';
     this.serverName = options.serverName || 'mail.localmta.dev';
-    this.allowedDomains = options.allowedDomains || null; // null means accept all
     this.options = options;
     this.server = null;
-
-    this.stmtInsert = db.prepare(`
-      INSERT INTO inbound_emails (
-        message_id, from_email, from_name, to_email, subject, text_body,
-        html_body, headers_json, attachments_json, raw_size, received_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
   }
 
   start() {
@@ -66,19 +61,25 @@ class InboundReceiver {
                 headersObj[key] = val;
               }
 
-              this.stmtInsert.run(
-                parsed.messageId || null,
-                fromVal.address || session.envelope.mailFrom.address || '',
-                fromVal.name || '',
-                toVal.address || (session.envelope.rcptTo[0] && session.envelope.rcptTo[0].address) || '',
-                parsed.subject || '(No Subject)',
-                parsed.text || '',
-                parsed.html || '',
-                JSON.stringify(headersObj),
-                JSON.stringify(attachments),
-                parsed.text ? parsed.text.length : 0,
-                Date.now()
-              );
+              const emailRecord = {
+                id: Date.now(),
+                message_id: parsed.messageId || null,
+                from_email: fromVal.address || session.envelope.mailFrom.address || '',
+                from_name: fromVal.name || '',
+                to_email: toVal.address || (session.envelope.rcptTo[0] && session.envelope.rcptTo[0].address) || '',
+                subject: parsed.subject || '(No Subject)',
+                text_body: parsed.text || '',
+                html_body: parsed.html || '',
+                headers: headersObj,
+                attachments,
+                raw_size: parsed.text ? parsed.text.length : 0,
+                received_at: Date.now()
+              };
+
+              recentInbox.unshift(emailRecord);
+              if (recentInbox.length > MAX_INBOX) {
+                recentInbox.pop();
+              }
 
               callback(null, 'OK: Message received');
             })
@@ -119,46 +120,21 @@ class InboundReceiver {
     });
   }
 
-  /**
-   * Search and paginate incoming emails.
-   */
-  static getInbox({ limit = 50, offset = 0, to = null, from = null, query = null }) {
-    let sql = 'SELECT id, message_id, from_email, from_name, to_email, subject, raw_size, received_at FROM inbound_emails WHERE 1=1';
-    const params = [];
-
-    if (to) {
-      sql += ' AND to_email LIKE ?';
-      params.push(`%${to}%`);
-    }
-    if (from) {
-      sql += ' AND from_email LIKE ?';
-      params.push(`%${from}%`);
-    }
-    if (query) {
-      sql += ' AND (subject LIKE ? OR text_body LIKE ?)';
-      params.push(`%${query}%`, `%${query}%`);
-    }
-
-    sql += ' ORDER BY id DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-
-    return db.prepare(sql).all(...params);
+  static getInbox({ limit = 50, offset = 0 } = {}) {
+    return recentInbox.slice(offset, offset + limit);
   }
 
   static getEmail(id) {
-    const row = db.prepare('SELECT * FROM inbound_emails WHERE id = ?').get(id);
-    if (!row) return null;
-
-    return {
-      ...row,
-      headers: row.headers_json ? JSON.parse(row.headers_json) : {},
-      attachments: row.attachments_json ? JSON.parse(row.attachments_json) : []
-    };
+    return recentInbox.find(e => e.id === id) || null;
   }
 
   static deleteEmail(id) {
-    const res = db.prepare('DELETE FROM inbound_emails WHERE id = ?').run(id);
-    return res.changes > 0;
+    const idx = recentInbox.findIndex(e => e.id === id);
+    if (idx !== -1) {
+      recentInbox.splice(idx, 1);
+      return true;
+    }
+    return false;
   }
 }
 

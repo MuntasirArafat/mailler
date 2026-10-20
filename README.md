@@ -1,25 +1,24 @@
-# High-Throughput Direct Node.js Mail Server & MTA Engine
+# Stateless Direct Node.js MTA Sender Node (Multi-VPS Architecture)
 
-A production-grade, autonomous **Direct Mail Server & MTA Engine** in Node.js built to **send and receive emails at scale (millions of emails)** directly to and from recipient mail exchangers (MX) on Port 25.
+A production-grade, lightweight, stateless **Direct MTA Mail Sender Node** in Node.js built to run across **multiple VPS instances** and be orchestrated from a **centralized control system**.
 
-**Zero third-party SMTP relays** (No SendGrid, Mailgun, or AWS SES) and **zero external email APIs**. 100% self-hosted, headless REST API, and built-in anti-spam deliverability protection.
+**Zero local database (No SQLite)**, zero local job queue bottlenecks, and zero third-party SMTP relays (No SendGrid, Mailgun, or AWS SES). Pure direct MTA transmission to destination mail exchangers (MX) on Port 25 with opportunistic STARTTLS.
 
 ---
 
 ## ⚡ Key Highlights
 
-- **Headless REST API**: Clean microservice interface for automated sending and receiving. Root (`/`) serves a minimal status indicator page.
-- **Direct Port 25 Delivery**: Connects straight to destination MX (Google, Microsoft, Yahoo, etc.) using raw TCP sockets with opportunistic STARTTLS and connection reuse.
-- **Millions-Ready Job Engine**: High-performance SQLite in WAL mode supporting 20,000+ atomic inserts/sec, concurrent worker pool, per-domain rate limiting, and exponential backoff retry.
-- **Two-Way Email (Sending + Receiving)**: Built-in Inbound SMTP receiver on port 25/2525 that parses RFC 5322 MIME messages, HTML, text, and attachments into a searchable inbox API.
+- **Stateless Sending Nodes**: Designed to run on multiple VPS worker nodes controlled centrally. No local database, no SQLite locks, zero persistence bottlenecks.
+- **Direct Port 25 Delivery**: Direct socket delivery to destination MX (Google, Microsoft, Yahoo, etc.) with opportunistic STARTTLS.
+- **Direct Single & Batch Send API**:
+  - `POST /api/send`: Live direct send returning delivery status, MX banner, and messageId immediately.
+  - `POST /api/send-batch`: Parallel direct send across multiple recipients with concurrency throttling.
+- **Dynamic DKIM from Central Controller**: Pass DKIM private keys directly in send requests or store in `config/dkim-keys.json`.
 - **Anti-Spam & Deliverability Shield**:
-  - Automatic 2048-bit RSA DKIM signing (`relaxed/relaxed`).
+  - Automatic 2048-bit RSA DKIM signing.
   - Strict RFC 5321 Return-Path SPF alignment.
   - RFC 8058 One-Click List-Unsubscribe headers (`List-Unsubscribe` & `List-Unsubscribe-Post`).
-  - Automated suppression list capturing permanent bounces (550 "User unknown") and unsubscribes.
-  - Unrestricted daily sending volume (100% controlled and scheduled by your software).
-  - Pre-flight DNS deliverability auditor (SPF, DKIM, DMARC, PTR, Port 25 reachability with 0–100 score).
-- **Multi-Domain Hosting**: Host multiple sending and receiving domains with automatic DKIM key generation and live DNS verification.
+  - Pre-flight DNS deliverability auditor (SPF, DKIM, DMARC, Port 25 reachability).
 - **Password Authentication**: Every API request is strictly secured by password authentication.
 
 ---
@@ -148,9 +147,9 @@ Provide your password in any of these 3 ways:
 
 ## 📖 Complete API Reference Documentation
 
-### 1. System Health & Stats
+### 1. System Health & Node Status
 #### `GET /api/health`
-Returns system status, authentication status, uptime, memory, and queue snapshot.
+Returns system status, worker role, uptime, memory, and HELO hostname.
 
 **Request:**
 ```bash
@@ -161,28 +160,23 @@ curl -H "x-api-key: mySecretPassword123" http://localhost:8080/api/health
 ```json
 {
   "status": "healthy",
-  "authRequired": true,
+  "role": "stateless-mta-worker",
   "uptime": 342.12,
   "memory": {
     "rss": 45182976,
     "heapTotal": 24969216,
     "heapUsed": 18274912
   },
-  "queue": {
-    "pending": 0,
-    "delivering": 0,
-    "completed": 142,
-    "failed": 0,
-    "deferred": 0
-  }
+  "heloHost": "mail.localmta.dev",
+  "authRequired": true
 }
 ```
 
 ---
 
-### 2. Send Single Email
+### 2. Direct Single Email Send
 #### `POST /api/send`
-Sends an email directly to the destination MX. Supports asynchronous queueing (default) or synchronous delivery.
+Immediately delivers an email directly to the destination MX on port 25 and returns live delivery confirmation.
 
 **Headers:**
 `Content-Type: application/json`  
@@ -191,165 +185,99 @@ Sends an email directly to the destination MX. Supports asynchronous queueing (d
 **Request Body Parameters:**
 | Parameter | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `from` | string | **Yes** | Sender email (e.g. `"support@yourdomain.com"`). Return-Path & DKIM align with this domain. |
+| `from` | string | **Yes** | Sender email (e.g. `"support@yourdomain.com"`). |
 | `to` | string | **Yes** | Recipient email (e.g. `"client@gmail.com"`). |
+| `name` / `fromName` | string | No | Sender display name (e.g. `"Support Team"`). |
 | `subject` | string | **Yes** | Email subject line. |
 | `text` | string | No | Plain text content. |
 | `html` | string | No | HTML content. |
-| `unsubscribeUrl` | string | No | URL for RFC 8058 One-Click Unsubscribe (required for Gmail/Yahoo bulk delivery). |
-| `unsubscribeEmail` | string | No | Mailto address for unsubscribe (e.g. `"unsub@yourdomain.com"`). |
+| `unsubscribeUrl` | string | No | RFC 8058 One-Click Unsubscribe URL. |
+| `unsubscribeEmail` | string | No | RFC 8058 One-Click Unsubscribe mailto. |
 | `headers` | object | No | Custom email headers (e.g. `{"X-Campaign-ID": "camp_99"}`). |
-| `sync` | boolean | No | `false` (default): Fast enqueue, returns job ID. `true`: Awaits live delivery to recipient MX. |
+| `dkim` | object | No | Optional dynamic DKIM passed from central controller: `{"domainName":"domain.com", "keySelector":"default", "privateKey":"..."}`. |
 
-**Example (Async Mode - Default):**
+**Example:**
 ```bash
 curl -X POST http://localhost:8080/api/send \
   -H "x-api-key: mySecretPassword123" \
   -H "Content-Type: application/json" \
   -d '{
     "from": "notifications@yourdomain.com",
+    "name": "My Company",
     "to": "client@gmail.com",
     "subject": "Direct MX Delivery Test",
     "html": "<h1>Direct Delivery Succeeded</h1><p>Sent directly to MX without 3rd party relays.</p>",
     "unsubscribeUrl": "https://yourdomain.com/unsubscribe?user=client"
   }'
 ```
-**Response (`202 Accepted`):**
-```json
-{
-  "success": true,
-  "queued": true,
-  "jobId": "f7a30369-2ba1-40be-8451-b0db3717282b"
-}
-```
 
-**Example (Sync Mode):**
-```bash
-curl -X POST http://localhost:8080/api/send \
-  -H "x-api-key: mySecretPassword123" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "from": "notifications@yourdomain.com",
-    "to": "client@gmail.com",
-    "subject": "Urgent Alert",
-    "text": "Your code is 123456",
-    "sync": true
-  }'
-```
 **Response (`200 OK`):**
 ```json
 {
   "success": true,
-  "sync": true,
-  "messageId": "<b94a0f44-d830-47b2-8c70-13f8cbe0efea@yourdomain.com>",
+  "messageId": "<f7a30369-2ba1-40be-8451-b0db3717282b@yourdomain.com>",
   "dkimSigned": true,
-  "response": "250 2.0.0 OK 1792427620 s20si10237937pgv.489 - gsmtp"
+  "recipient": "client@gmail.com",
+  "durationMs": 420,
+  "host": "gmail-smtp-in.l.google.com",
+  "response": "250 2.0.0 OK 1792427620 s20si10237937pgv.489 - gsmtp",
+  "tls": true
 }
 ```
 
 ---
 
-### 3. Bulk Batch Ingestion (Millions of Emails)
-#### `POST /api/jobs/batch`
-Ingests an array of email objects in a single atomic SQLite transaction (capable of 20,000+ insertions/sec).
+### 3. Direct Concurrent Batch Send
+#### `POST /api/send-batch`
+Allows your centralized system to dispatch an array of emails to this VPS node for parallel direct delivery.
 
 **Request Body:**
 ```json
 {
+  "concurrency": 10,
   "emails": [
     {
       "from": "newsletter@yourdomain.com",
       "to": "user1@gmail.com",
       "subject": "Weekly Update",
-      "html": "<p>Hello User 1</p>",
-      "unsubscribeUrl": "https://yourdomain.com/unsub?id=1"
+      "html": "<p>Hello User 1</p>"
     },
     {
       "from": "newsletter@yourdomain.com",
       "to": "user2@yahoo.com",
       "subject": "Weekly Update",
-      "html": "<p>Hello User 2</p>",
-      "unsubscribeUrl": "https://yourdomain.com/unsub?id=2"
+      "html": "<p>Hello User 2</p>"
     }
   ]
 }
 ```
 
-**Curl Command:**
-```bash
-curl -X POST http://localhost:8080/api/jobs/batch \
-  -H "x-api-key: mySecretPassword123" \
-  -H "Content-Type: application/json" \
-  -d '{"emails":[{"from":"team@brand.com","to":"user1@gmail.com","subject":"Hi 1","text":"Msg 1"},{"from":"team@brand.com","to":"user2@yahoo.com","subject":"Hi 2","text":"Msg 2"}]}'
-```
-
-**Response (`202 Accepted`):**
+**Response (`200 OK`):**
 ```json
 {
   "success": true,
-  "enqueued": 2,
-  "jobs": [
-    { "jobId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d", "to": "user1@gmail.com" },
-    { "jobId": "1b9c1d2e-4f5a-6b7c-8d9e-0f1a2b3c4d5e", "to": "user2@yahoo.com" }
+  "total": 2,
+  "sent": 2,
+  "failed": 0,
+  "results": [
+    {
+      "to": "user1@gmail.com",
+      "success": true,
+      "messageId": "<uuid1@yourdomain.com>",
+      "dkimSigned": true,
+      "host": "gmail-smtp-in.l.google.com",
+      "response": "250 2.0.0 OK"
+    },
+    {
+      "to": "user2@yahoo.com",
+      "success": true,
+      "messageId": "<uuid2@yourdomain.com>",
+      "dkimSigned": true,
+      "host": "mta5.am0.yahoodns.net",
+      "response": "250 ok dirdel"
+    }
   ]
 }
-```
-
----
-
-### 4. Job Queue Monitoring & Control
-
-#### `GET /api/jobs/stats`
-Returns counts of jobs broken down by status.
-```bash
-curl -H "x-api-key: mySecretPassword123" http://localhost:8080/api/jobs/stats
-```
-**Response:**
-```json
-{
-  "pending": 50,
-  "delivering": 12,
-  "completed": 12480,
-  "failed": 2,
-  "deferred": 15
-}
-```
-
-#### `GET /api/jobs`
-List recent outbound jobs with optional status filter and pagination.
-- Query Parameters:
-  - `status` (optional): `pending`, `delivering`, `completed`, `failed`, `deferred`
-  - `limit` (default: 50, max: 500)
-  - `offset` (default: 0)
-
-```bash
-curl -H "x-api-key: mySecretPassword123" "http://localhost:8080/api/jobs?status=completed&limit=2"
-```
-
-#### `GET /api/jobs/:id`
-Inspect details and delivery logs for a specific job ID.
-```bash
-curl -H "x-api-key: mySecretPassword123" http://localhost:8080/api/jobs/f7a30369-2ba1-40be-8451-b0db3717282b
-```
-**Response:**
-```json
-{
-  "id": "f7a30369-2ba1-40be-8451-b0db3717282b",
-  "from_email": "notifications@yourdomain.com",
-  "to_email": "client@gmail.com",
-  "destination_domain": "gmail.com",
-  "status": "completed",
-  "attempts": 1,
-  "last_response": "250 2.0.0 OK 1792427620 s20si10237937pgv.489 - gsmtp",
-  "created_at": 1792427618000,
-  "updated_at": 1792427620300
-}
-```
-
-#### `POST /api/jobs/retry-failed`
-Re-queues all failed jobs back to `pending` status with reset attempt counters.
-```bash
-curl -X POST -H "x-api-key: mySecretPassword123" http://localhost:8080/api/jobs/retry-failed
 ```
 
 ---

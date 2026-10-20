@@ -1,43 +1,70 @@
-const db = require('./db');
+const fs = require('fs');
+const path = require('path');
 
 class SuppressionManager {
+  static getConfigFile() {
+    const configDir = path.join(__dirname, '..', 'config');
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+    return path.join(configDir, 'suppression.json');
+  }
+
+  static loadList() {
+    const file = this.getConfigFile();
+    if (!fs.existsSync(file)) return {};
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (e) {
+      return {};
+    }
+  }
+
+  static saveList(list) {
+    const file = this.getConfigFile();
+    fs.writeFileSync(file, JSON.stringify(list, null, 2), 'utf8');
+  }
+
   static isSuppressed(email) {
     if (!email) return false;
     const cleanEmail = email.toLowerCase().trim();
-    const row = db.prepare('SELECT email FROM suppression_list WHERE email = ?').get(cleanEmail);
-    return !!row;
+    const list = this.loadList();
+    return !!list[cleanEmail];
   }
 
   static add(email, reason = 'manual', details = null) {
     const cleanEmail = email.toLowerCase().trim();
-    const stmt = db.prepare(`
-      INSERT INTO suppression_list (email, reason, details, created_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(email) DO UPDATE SET
-        reason = excluded.reason,
-        details = excluded.details,
-        created_at = excluded.created_at
-    `);
-    stmt.run(cleanEmail, reason, details, Date.now());
+    const list = this.loadList();
+    const item = { email: cleanEmail, reason, details, created_at: Date.now() };
+    list[cleanEmail] = item;
+    this.saveList(list);
     return { email: cleanEmail, reason, status: 'suppressed' };
   }
 
   static remove(email) {
     const cleanEmail = email.toLowerCase().trim();
-    const res = db.prepare('DELETE FROM suppression_list WHERE email = ?').run(cleanEmail);
-    return res.changes > 0;
+    const list = this.loadList();
+    if (list[cleanEmail]) {
+      delete list[cleanEmail];
+      this.saveList(list);
+      return true;
+    }
+    return false;
   }
 
   static list({ limit = 50, offset = 0, reason = null } = {}) {
+    const list = this.loadList();
+    let items = Object.values(list);
     if (reason) {
-      return db.prepare('SELECT * FROM suppression_list WHERE reason = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(reason, limit, offset);
+      items = items.filter(i => i.reason === reason);
     }
-    return db.prepare('SELECT * FROM suppression_list ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
+    items.sort((a, b) => b.created_at - a.created_at);
+    return items.slice(offset, offset + limit);
   }
 
   static count() {
-    const res = db.prepare('SELECT COUNT(*) as total FROM suppression_list').get();
-    return res.total || 0;
+    const list = this.loadList();
+    return Object.keys(list).length;
   }
 }
 
